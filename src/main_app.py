@@ -4,6 +4,8 @@ from tkinter import messagebox  # For showing error popups
 import os
 import pandas as pd
 import requests  # For NHTSA API
+import sqlite3  # For database connection
+from collections import defaultdict  # For counting frequencies
 # Assuming text_utils is in the same directory or src is in PYTHONPATH
 try:
     from utils.text_utils import normalize_text
@@ -228,10 +230,149 @@ class FixacarApp:
                     f"Processed: '{original_desc}' -> Normalized: '{normalized_desc}', EqID: {equivalencia_id}")
         else:
             print("No part descriptions entered.")
+            processed_parts = []  # Ensure it's an empty list if no input
 
-        # TODO: Implement Phase 4 (Search Logic using vehicle_details and processed_parts)
+        # --- Phase 4: Search Logic ---
+        # Dictionary to store suggestions for each original part description
+        all_part_suggestions = {}
 
-        # For now, display decoded details and processed parts info
+        # Task 4.1: Establish SQLite connection
+        db_conn = None
+        try:
+            print(f"Connecting to database: {DEFAULT_DB_PATH}")
+            if not os.path.exists(DEFAULT_DB_PATH):
+                messagebox.showerror(
+                    "Database Error", f"Database file not found at {DEFAULT_DB_PATH}. Please run the offline processor first.")
+                self.results_label.config(
+                    text=f"Error: Database not found at {DEFAULT_DB_PATH}")
+                return
+            db_conn = sqlite3.connect(DEFAULT_DB_PATH)
+            cursor = db_conn.cursor()
+            print("Database connection successful.")
+
+            # Task 4.2: Loop through each processed part
+            for part_info in processed_parts:
+                original_desc = part_info["original"]
+                normalized_desc = part_info["normalized"]
+                eq_id = part_info["equivalencia_id"]
+                print(
+                    f"\nSearching for: '{original_desc}' (Normalized: '{normalized_desc}', EqID: {eq_id})")
+
+                suggestions = {}  # sku -> {confidence, source}
+
+                # --- Search Strategy ---
+                # Get VIN details for matching (use N/A if missing)
+                vin_make = vehicle_details.get('Make', 'N/A')
+                vin_model = vehicle_details.get('Model', 'N/A')
+                vin_year_str = vehicle_details.get('Model Year', 'N/A')
+                try:
+                    vin_year = int(
+                        vin_year_str) if vin_year_str != 'N/A' else None
+                except (ValueError, TypeError):
+                    vin_year = None
+
+                # Task 4.3: Maestro Search (Highest Confidence)
+                if eq_id is not None:
+                    print(f"  Searching Maestro (EqID: {eq_id})...")
+                    for maestro_entry in maestro_data_global:
+                        # Basic matching: Make, Model, Year range, EqID
+                        match = (maestro_entry.get('Equivalencia_Row_ID') == eq_id and
+                                 maestro_entry.get('VIN_Make') == vin_make and
+                                 maestro_entry.get('VIN_Model') == vin_model)
+                        # Add year range check if possible (requires Maestro schema consistency)
+                        # For now, skipping complex year range matching in Maestro for simplicity
+                        if match:
+                            sku = maestro_entry.get('Confirmed_SKU')
+                            if sku and sku not in suggestions:
+                                suggestions[sku] = {
+                                    "confidence": 1.0, "source": "Maestro"}
+                                print(
+                                    f"    Found in Maestro: {sku} (Conf: 1.0)")
+
+                # Task 4.4 & 4.5: SQLite Search (ID Match)
+                if eq_id is not None and vin_year is not None:
+                    print(
+                        f"  Searching SQLite DB (EqID: {eq_id}, Year: {vin_year})...")
+                    try:
+                        cursor.execute("""
+                            SELECT sku, COUNT(*) as frequency 
+                            FROM historical_parts 
+                            WHERE vin_make = ? AND vin_model = ? AND vin_year = ? AND Equivalencia_Row_ID = ?
+                            GROUP BY sku
+                        """, (vin_make, vin_model, vin_year, eq_id))
+
+                        results = cursor.fetchall()
+                        total_matches = sum(row[1] for row in results)
+
+                        for sku, frequency in results:
+                            if sku not in suggestions:  # Prioritize Maestro confidence
+                                # Simple confidence based on frequency
+                                confidence = round(
+                                    0.5 + 0.4 * (frequency / total_matches), 3) if total_matches > 0 else 0.5
+                                suggestions[sku] = {
+                                    "confidence": confidence, "source": f"DB (ID:{eq_id})"}
+                                print(
+                                    f"    Found in DB (ID Match): {sku} (Freq: {frequency}, Conf: {confidence})")
+                    except Exception as db_err:
+                        print(
+                            f"    Error querying SQLite DB (ID Match): {db_err}")
+
+                # Task 4.6: Fallback Search (Normalized Text Match)
+                if eq_id is None:
+                    print(
+                        f"  Fallback Search (Normalized: '{normalized_desc}')...")
+                    # Fallback in Maestro
+                    for maestro_entry in maestro_data_global:
+                        if (maestro_entry.get('Normalized_Description_Input') == normalized_desc and
+                            maestro_entry.get('VIN_Make') == vin_make and
+                                maestro_entry.get('VIN_Model') == vin_model):
+                            sku = maestro_entry.get('Confirmed_SKU')
+                            if sku and sku not in suggestions:
+                                suggestions[sku] = {
+                                    "confidence": 0.2, "source": "Maestro (Fallback)"}
+                                print(
+                                    f"    Found in Maestro (Fallback): {sku} (Conf: 0.2)")
+
+                    # Fallback in SQLite
+                    if vin_year is not None:
+                        try:
+                            cursor.execute("""
+                                SELECT sku, COUNT(*) as frequency 
+                                FROM historical_parts 
+                                WHERE vin_make = ? AND vin_model = ? AND vin_year = ? AND normalized_description = ?
+                                GROUP BY sku
+                            """, (vin_make, vin_model, vin_year, normalized_desc))
+
+                            results = cursor.fetchall()
+                            for sku, frequency in results:
+                                if sku not in suggestions:
+                                    suggestions[sku] = {
+                                        "confidence": 0.1, "source": f"DB (Text Fallback)"}
+                                    print(
+                                        f"    Found in DB (Fallback): {sku} (Conf: 0.1)")
+                        except Exception as db_err:
+                            print(
+                                f"    Error querying SQLite DB (Fallback): {db_err}")
+
+                # Task 4.7 & 4.8: Combine, Rank (already combined, just need to sort)
+                sorted_suggestions = sorted(
+                    suggestions.items(), key=lambda item: item[1]['confidence'], reverse=True)
+                all_part_suggestions[original_desc] = sorted_suggestions
+                print(
+                    f"  Suggestions for '{original_desc}': {sorted_suggestions}")
+
+        except Exception as e:
+            messagebox.showerror(
+                "Search Error", f"An error occurred during search: {e}")
+            print(f"Error during search phase: {e}")
+            self.results_label.config(text=f"Error during search: {e}")
+        finally:
+            if db_conn:
+                db_conn.close()
+                print("Database connection closed.")
+
+        # --- Update Results Display ---
+        # (This part overlaps with Phase 5 but needed for basic output)
         details_str = f"VIN: {vin}\n"
         details_str += f"Make: {vehicle_details.get('Make', 'N/A')}\n"
         details_str += f"Model: {vehicle_details.get('Model', 'N/A')}\n"
@@ -239,16 +380,21 @@ class FixacarApp:
         details_str += f"Series: {vehicle_details.get('Series', 'N/A')}\n"
         details_str += f"Body Style: {vehicle_details.get('Body Class', 'N/A')}\n"
 
-        details_str += "\n--- Processed Part Descriptions ---\n"
-        if processed_parts:
-            for part in processed_parts:
-                details_str += f"Original: {part['original']}\n"
-                details_str += f"  Normalized: {part['normalized']}\n"
-                details_str += f"  Equivalencia ID: {part['equivalencia_id']}\n"
-        else:
+        details_str += "\n--- SKU Suggestions ---\n"
+        if not processed_parts:
             details_str += "(No descriptions entered)\n"
+        elif not all_part_suggestions:
+            details_str += "(No suggestions found for entered descriptions)\n"
+        else:
+            for original_desc, suggestions_list in all_part_suggestions.items():
+                details_str += f"\nFor '{original_desc}':\n"
+                if suggestions_list:
+                    for sku, info in suggestions_list:
+                        details_str += f"  - SKU: {sku} (Confidence: {info['confidence']:.3f}, Source: {info['source']})\n"
+                else:
+                    details_str += "  (No suggestions found)\n"
 
-        details_str += "\n(Search logic not yet implemented)"
+        # Update the results label - consider using a Text widget or Treeview for better formatting later
         self.results_label.config(text=details_str)
 
     def decode_vin_nhtsa(self, vin_number: str) -> dict | None:
