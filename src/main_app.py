@@ -6,6 +6,7 @@ import pandas as pd
 import requests  # For NHTSA API
 import sqlite3  # For database connection
 from collections import defaultdict  # For counting frequencies
+import datetime  # For timestamping Maestro entries
 # Assuming text_utils is in the same directory or src is in PYTHONPATH
 try:
     from utils.text_utils import normalize_text
@@ -22,14 +23,14 @@ DEFAULT_DB_PATH = "data/fixacar_history.db"
 
 # In-memory data stores
 equivalencias_map_global = {}
-maestro_data_global = []
+maestro_data_global = []  # This will hold the list of dictionaries
 
 
 class FixacarApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Fixacar SKU Finder v1.0")
-        self.root.geometry("800x600")
+        self.root.geometry("800x600")  # Adjusted default size
 
         # Load initial data
         self.load_all_data()
@@ -44,6 +45,7 @@ class FixacarApp:
         print("--- Loading Application Data ---")
         equivalencias_map_global = self.load_equivalencias_data(
             DEFAULT_EQUIVALENCIAS_PATH)
+        # Load maestro data into the global variable
         maestro_data_global = self.load_maestro_data(
             DEFAULT_MAESTRO_PATH, equivalencias_map_global)
         # DB connection will be established when needed for search
@@ -97,7 +99,9 @@ class FixacarApp:
         ]
 
         # Ensure data directory exists
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        data_dir = os.path.dirname(file_path)
+        if data_dir and not os.path.exists(data_dir):
+            os.makedirs(data_dir, exist_ok=True)
 
         if not os.path.exists(file_path):
             print(
@@ -113,6 +117,11 @@ class FixacarApp:
 
         try:
             df_maestro = pd.read_excel(file_path, sheet_name=0)
+            # Ensure Maestro_ID is treated as integer where possible, handle NaN/None
+            if 'Maestro_ID' in df_maestro.columns:
+                df_maestro['Maestro_ID'] = pd.to_numeric(
+                    df_maestro['Maestro_ID'], errors='coerce').fillna(0).astype(int)
+
             if df_maestro.empty:
                 print("Maestro file is empty.")
                 return []
@@ -131,6 +140,25 @@ class FixacarApp:
                 else:
                     entry['Normalized_Description_Input'] = ""
                     entry['Equivalencia_Row_ID'] = None
+
+                # Ensure numeric types are correct, handle potential read errors
+                for col in ['Maestro_ID', 'VIN_Year_Min', 'VIN_Year_Max', 'Equivalencia_Row_ID']:
+                    if col in entry and pd.notna(entry[col]):
+                        try:
+                            entry[col] = int(entry[col])
+                        except (ValueError, TypeError):
+                            # Or some other default like 0 or -1
+                            entry[col] = None
+                    elif col in entry:
+                        entry[col] = None  # Handle NaN/None explicitly
+
+                if 'Confidence' in entry and pd.notna(entry['Confidence']):
+                    try:
+                        entry['Confidence'] = float(entry['Confidence'])
+                    except (ValueError, TypeError):
+                        entry['Confidence'] = None
+                elif 'Confidence' in entry:
+                    entry['Confidence'] = None
 
                 maestro_list.append(entry)
 
@@ -165,25 +193,68 @@ class FixacarApp:
             input_frame, text="Find SKUs", command=self.find_skus_handler)
         self.find_button.grid(row=2, column=1, padx=5, pady=10, sticky="e")
 
-        # --- Output Frame (Placeholder for now) ---
+        # --- Output Frame ---
         output_frame = ttk.LabelFrame(
             self.root, text="Results", padding=(10, 5))
         output_frame.pack(padx=10, pady=10, fill="both", expand=True)
 
-        self.results_label = ttk.Label(
-            output_frame, text="Vehicle details and SKU suggestions will appear here.")
-        self.results_label.pack(padx=5, pady=5, anchor="nw")
+        # Make the output frame resize correctly
+        self.root.rowconfigure(1, weight=1)  # Allow output_frame row to expand
+        # Allow output_frame column to expand
+        self.root.columnconfigure(0, weight=1)
+        output_frame.rowconfigure(0, weight=1)
+        output_frame.columnconfigure(0, weight=1)
 
-        # More UI elements will be added in Phase 5 (Output area, selections)
+        # Scrollable Canvas for results
+        canvas = tk.Canvas(output_frame)
+        scrollbar = ttk.Scrollbar(
+            output_frame, orient="vertical", command=canvas.yview)
+        self.scrollable_frame = ttk.Frame(canvas)  # Frame inside canvas
+
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(
+                scrollregion=canvas.bbox("all")
+            )
+        )
+
+        canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        # Placeholder Label inside scrollable frame (will be removed when results are shown)
+        self.results_placeholder_label = ttk.Label(
+            self.scrollable_frame, text="Enter VIN and Descriptions, then click 'Find SKUs'.")
+        self.results_placeholder_label.pack(padx=5, pady=5, anchor="nw")
+
+        # --- Save Button ---
+        self.save_button = ttk.Button(
+            self.root, text="Save Confirmed Selections", command=self.save_selections_handler, state=tk.DISABLED)
+        self.save_button.pack(pady=10)
+
+        # Instance variables to store results context for saving
+        self.vehicle_details = None
+        self.processed_parts = None
+        # Stores {original_desc: [(sku, info), ...]}
+        self.current_suggestions = {}
+        self.selection_vars = {}  # Stores {original_desc: tk.StringVar()}
 
     def find_skus_handler(self):
         """
         Handles the 'Find SKUs' button click.
-        This will orchestrate Tasks 3.3 through 3.10.
+        Orchestrates VIN decoding, part processing, searching, and displaying results.
         """
         print("\n--- 'Find SKUs' button clicked ---")
         vin = self.vin_entry.get().strip().upper()
         part_descriptions_raw = self.parts_text.get("1.0", tk.END).strip()
+
+        # Clear previous results display
+        for widget in self.scrollable_frame.winfo_children():
+            widget.destroy()
+        self.results_placeholder_label = None  # Remove reference
+        self.save_button.config(state=tk.DISABLED)  # Disable save button
 
         print(f"VIN Entered: {vin}")
         print(f"Part Descriptions Raw:\n{part_descriptions_raw}")
@@ -192,36 +263,42 @@ class FixacarApp:
         if not vin or len(vin) != 17:
             messagebox.showerror(
                 "Invalid VIN", "VIN must be 17 characters long.")
-            self.results_label.config(
-                text="Error: VIN must be 17 characters long.")
+            ttk.Label(self.scrollable_frame,
+                      text="Error: VIN must be 17 characters long.").pack(anchor="nw")
             return
 
-        self.results_label.config(text=f"Decoding VIN: {vin}...")
-        self.root.update_idletasks()  # Update GUI to show "Decoding VIN..."
+        # Display status before potentially long operation
+        status_label = ttk.Label(
+            self.scrollable_frame, text=f"Decoding VIN: {vin}...")
+        status_label.pack(anchor="nw")
+        self.root.update_idletasks()
 
         # Task 3.5 & 3.6: Call NHTSA VIN Decoder API and Handle Response
         vehicle_details = self.decode_vin_nhtsa(vin)
 
+        # Clear status label
+        status_label.destroy()
+
         if not vehicle_details:
             # decode_vin_nhtsa will show its own error message
-            self.results_label.config(
-                text=f"Failed to decode VIN: {vin}. Check console for details.")
+            ttk.Label(self.scrollable_frame,
+                      text=f"Failed to decode VIN: {vin}. Check console for details.").pack(anchor="nw")
             return
 
-        # Task 3.7: Store extracted VIN details (vehicle_details is already a dict)
-        print(f"Decoded Vehicle Details: {vehicle_details}")
+        # Task 3.7: Store extracted VIN details
+        self.vehicle_details = vehicle_details
+        print(f"Decoded Vehicle Details: {self.vehicle_details}")
 
         # Tasks 3.8, 3.9, 3.10: Process part descriptions
-        processed_parts = []
+        self.processed_parts = []
         if part_descriptions_raw:
             original_descriptions = [
                 line.strip() for line in part_descriptions_raw.splitlines() if line.strip()]
             print(f"Original Descriptions List: {original_descriptions}")
             for original_desc in original_descriptions:
                 normalized_desc = normalize_text(original_desc)
-                equivalencia_id = equivalencias_map_global.get(
-                    normalized_desc)  # Task 3.10
-                processed_parts.append({
+                equivalencia_id = equivalencias_map_global.get(normalized_desc)
+                self.processed_parts.append({
                     "original": original_desc,
                     "normalized": normalized_desc,
                     "equivalencia_id": equivalencia_id
@@ -230,57 +307,50 @@ class FixacarApp:
                     f"Processed: '{original_desc}' -> Normalized: '{normalized_desc}', EqID: {equivalencia_id}")
         else:
             print("No part descriptions entered.")
-            processed_parts = []  # Ensure it's an empty list if no input
+            self.processed_parts = []
 
         # --- Phase 4: Search Logic ---
-        # Dictionary to store suggestions for each original part description
-        all_part_suggestions = {}
+        self.current_suggestions = {}
+        self.selection_vars = {}
 
-        # Task 4.1: Establish SQLite connection
         db_conn = None
         try:
             print(f"Connecting to database: {DEFAULT_DB_PATH}")
             if not os.path.exists(DEFAULT_DB_PATH):
                 messagebox.showerror(
                     "Database Error", f"Database file not found at {DEFAULT_DB_PATH}. Please run the offline processor first.")
-                self.results_label.config(
-                    text=f"Error: Database not found at {DEFAULT_DB_PATH}")
+                ttk.Label(self.scrollable_frame, text=f"Error: Database not found at {DEFAULT_DB_PATH}").pack(
+                    anchor="nw")
                 return
             db_conn = sqlite3.connect(DEFAULT_DB_PATH)
             cursor = db_conn.cursor()
             print("Database connection successful.")
 
-            # Task 4.2: Loop through each processed part
-            for part_info in processed_parts:
+            for part_info in self.processed_parts:
                 original_desc = part_info["original"]
                 normalized_desc = part_info["normalized"]
                 eq_id = part_info["equivalencia_id"]
                 print(
                     f"\nSearching for: '{original_desc}' (Normalized: '{normalized_desc}', EqID: {eq_id})")
 
-                suggestions = {}  # sku -> {confidence, source}
+                suggestions = {}
 
-                # --- Search Strategy ---
-                # Get VIN details for matching (use N/A if missing)
-                vin_make = vehicle_details.get('Make', 'N/A')
-                vin_model = vehicle_details.get('Model', 'N/A')
-                vin_year_str = vehicle_details.get('Model Year', 'N/A')
+                vin_make = self.vehicle_details.get('Make', 'N/A')
+                vin_model = self.vehicle_details.get('Model', 'N/A')
+                vin_year_str = self.vehicle_details.get('Model Year', 'N/A')
                 try:
                     vin_year = int(
                         vin_year_str) if vin_year_str != 'N/A' else None
                 except (ValueError, TypeError):
                     vin_year = None
 
-                # Task 4.3: Maestro Search (Highest Confidence)
+                # Maestro Search
                 if eq_id is not None:
                     print(f"  Searching Maestro (EqID: {eq_id})...")
                     for maestro_entry in maestro_data_global:
-                        # Basic matching: Make, Model, Year range, EqID
                         match = (maestro_entry.get('Equivalencia_Row_ID') == eq_id and
                                  maestro_entry.get('VIN_Make') == vin_make and
                                  maestro_entry.get('VIN_Model') == vin_model)
-                        # Add year range check if possible (requires Maestro schema consistency)
-                        # For now, skipping complex year range matching in Maestro for simplicity
                         if match:
                             sku = maestro_entry.get('Confirmed_SKU')
                             if sku and sku not in suggestions:
@@ -289,24 +359,21 @@ class FixacarApp:
                                 print(
                                     f"    Found in Maestro: {sku} (Conf: 1.0)")
 
-                # Task 4.4 & 4.5: SQLite Search (ID Match)
+                # SQLite Search (ID Match)
                 if eq_id is not None and vin_year is not None:
                     print(
                         f"  Searching SQLite DB (EqID: {eq_id}, Year: {vin_year})...")
                     try:
                         cursor.execute("""
-                            SELECT sku, COUNT(*) as frequency 
-                            FROM historical_parts 
+                            SELECT sku, COUNT(*) as frequency
+                            FROM historical_parts
                             WHERE vin_make = ? AND vin_model = ? AND vin_year = ? AND Equivalencia_Row_ID = ?
                             GROUP BY sku
                         """, (vin_make, vin_model, vin_year, eq_id))
-
                         results = cursor.fetchall()
                         total_matches = sum(row[1] for row in results)
-
                         for sku, frequency in results:
-                            if sku not in suggestions:  # Prioritize Maestro confidence
-                                # Simple confidence based on frequency
+                            if sku not in suggestions:
                                 confidence = round(
                                     0.5 + 0.4 * (frequency / total_matches), 3) if total_matches > 0 else 0.5
                                 suggestions[sku] = {
@@ -317,7 +384,7 @@ class FixacarApp:
                         print(
                             f"    Error querying SQLite DB (ID Match): {db_err}")
 
-                # Task 4.6: Fallback Search (Normalized Text Match)
+                # Fallback Search
                 if eq_id is None:
                     print(
                         f"  Fallback Search (Normalized: '{normalized_desc}')...")
@@ -332,17 +399,15 @@ class FixacarApp:
                                     "confidence": 0.2, "source": "Maestro (Fallback)"}
                                 print(
                                     f"    Found in Maestro (Fallback): {sku} (Conf: 0.2)")
-
                     # Fallback in SQLite
                     if vin_year is not None:
                         try:
                             cursor.execute("""
-                                SELECT sku, COUNT(*) as frequency 
-                                FROM historical_parts 
+                                SELECT sku, COUNT(*) as frequency
+                                FROM historical_parts
                                 WHERE vin_make = ? AND vin_model = ? AND vin_year = ? AND normalized_description = ?
                                 GROUP BY sku
                             """, (vin_make, vin_model, vin_year, normalized_desc))
-
                             results = cursor.fetchall()
                             for sku, frequency in results:
                                 if sku not in suggestions:
@@ -354,10 +419,9 @@ class FixacarApp:
                             print(
                                 f"    Error querying SQLite DB (Fallback): {db_err}")
 
-                # Task 4.7 & 4.8: Combine, Rank (already combined, just need to sort)
                 sorted_suggestions = sorted(
                     suggestions.items(), key=lambda item: item[1]['confidence'], reverse=True)
-                all_part_suggestions[original_desc] = sorted_suggestions
+                self.current_suggestions[original_desc] = sorted_suggestions
                 print(
                     f"  Suggestions for '{original_desc}': {sorted_suggestions}")
 
@@ -365,37 +429,234 @@ class FixacarApp:
             messagebox.showerror(
                 "Search Error", f"An error occurred during search: {e}")
             print(f"Error during search phase: {e}")
-            self.results_label.config(text=f"Error during search: {e}")
+            ttk.Label(self.scrollable_frame,
+                      text=f"Error during search: {e}").pack(anchor="nw")
         finally:
             if db_conn:
                 db_conn.close()
                 print("Database connection closed.")
 
         # --- Update Results Display ---
-        # (This part overlaps with Phase 5 but needed for basic output)
-        details_str = f"VIN: {vin}\n"
-        details_str += f"Make: {vehicle_details.get('Make', 'N/A')}\n"
-        details_str += f"Model: {vehicle_details.get('Model', 'N/A')}\n"
-        details_str += f"Year: {vehicle_details.get('Model Year', 'N/A')}\n"
-        details_str += f"Series: {vehicle_details.get('Series', 'N/A')}\n"
-        details_str += f"Body Style: {vehicle_details.get('Body Class', 'N/A')}\n"
+        self.display_results()  # Call method to update GUI
 
-        details_str += "\n--- SKU Suggestions ---\n"
-        if not processed_parts:
-            details_str += "(No descriptions entered)\n"
-        elif not all_part_suggestions:
-            details_str += "(No suggestions found for entered descriptions)\n"
+    def display_results(self):
+        """Updates the scrollable results frame with vehicle details and interactive SKU suggestions."""
+        # Clear previous results
+        for widget in self.scrollable_frame.winfo_children():
+            widget.destroy()
+        self.results_placeholder_label = None  # Clear reference
+
+        # Display Vehicle Details (Task 5.1)
+        if self.vehicle_details:
+            vin = self.vin_entry.get().strip().upper()  # Get VIN again for display
+            details_frame = ttk.LabelFrame(
+                self.scrollable_frame, text="Vehicle Details", padding=5)
+            details_frame.pack(pady=5, padx=5, fill="x", anchor="nw")
+            ttk.Label(details_frame, text=f"VIN: {vin}").pack(anchor="w")
+            ttk.Label(
+                details_frame, text=f"Make: {self.vehicle_details.get('Make', 'N/A')}").pack(anchor="w")
+            ttk.Label(
+                details_frame, text=f"Model: {self.vehicle_details.get('Model', 'N/A')}").pack(anchor="w")
+            ttk.Label(
+                details_frame, text=f"Year: {self.vehicle_details.get('Model Year', 'N/A')}").pack(anchor="w")
+            ttk.Label(
+                details_frame, text=f"Series: {self.vehicle_details.get('Series', 'N/A')}").pack(anchor="w")
+            ttk.Label(
+                details_frame, text=f"Body Style: {self.vehicle_details.get('Body Class', 'N/A')}").pack(anchor="w")
         else:
-            for original_desc, suggestions_list in all_part_suggestions.items():
-                details_str += f"\nFor '{original_desc}':\n"
-                if suggestions_list:
-                    for sku, info in suggestions_list:
-                        details_str += f"  - SKU: {sku} (Confidence: {info['confidence']:.3f}, Source: {info['source']})\n"
-                else:
-                    details_str += "  (No suggestions found)\n"
+            ttk.Label(self.scrollable_frame,
+                      text="Vehicle details could not be retrieved.").pack(anchor="nw")
 
-        # Update the results label - consider using a Text widget or Treeview for better formatting later
-        self.results_label.config(text=details_str)
+        # Display SKU Suggestions (Tasks 5.2, 5.3, 5.4)
+        if not self.processed_parts:
+            ttk.Label(self.scrollable_frame,
+                      text="\nNo part descriptions were entered.").pack(anchor="nw")
+        elif not self.current_suggestions:
+            ttk.Label(self.scrollable_frame,
+                      text="\nNo suggestions found for the entered descriptions.").pack(anchor="nw")
+        else:
+            ttk.Separator(self.scrollable_frame, orient='horizontal').pack(
+                fill='x', pady=10)
+            ttk.Label(self.scrollable_frame, text="SKU Suggestions:", font=(
+                'TkDefaultFont', 10, 'bold')).pack(anchor="nw", pady=(0, 5))
+
+            for part_info in self.processed_parts:
+                original_desc = part_info["original"]
+                suggestions_list = self.current_suggestions.get(
+                    original_desc, [])
+
+                part_frame = ttk.Frame(self.scrollable_frame)
+                part_frame.pack(pady=5, padx=5, fill="x", anchor="nw")
+
+                ttk.Label(part_frame, text=f"For: '{original_desc}'", font=(
+                    'TkDefaultFont', 9, 'bold')).pack(anchor="w")
+
+                if suggestions_list:
+                    # Create a StringVar for this part's radio buttons
+                    self.selection_vars[original_desc] = tk.StringVar(
+                        value=None)  # No default selection
+
+                    for sku, info in suggestions_list:
+                        radio_text = f"SKU: {sku} (Conf: {info['confidence']:.3f}, Src: {info['source']})"
+                        rb = ttk.Radiobutton(
+                            part_frame,
+                            text=radio_text,
+                            variable=self.selection_vars[original_desc],
+                            value=sku  # The value stored when this button is selected
+                        )
+                        rb.pack(anchor="w", padx=15)
+                    # Option to select none
+                    rb_none = ttk.Radiobutton(
+                        part_frame,
+                        text="None of these / Manual Entry",
+                        variable=self.selection_vars[original_desc],
+                        value=""  # Represent 'no selection' with empty string
+                    )
+                    rb_none.pack(anchor="w", padx=15)
+
+                else:
+                    ttk.Label(part_frame, text="  (No suggestions found)").pack(
+                        anchor="w", padx=15)
+                ttk.Separator(part_frame, orient='horizontal').pack(
+                    fill='x', pady=5)
+
+            # Enable the save button only if there are suggestions
+            if any(self.current_suggestions.values()):
+                self.save_button.config(state=tk.NORMAL)
+            else:
+                self.save_button.config(state=tk.DISABLED)
+
+    def save_selections_handler(self):
+        """
+        Handles the 'Save Confirmed Selections' button click.
+        Gathers selected SKUs, adds them to the in-memory Maestro data,
+        and writes the updated data back to Maestro.xlsx.
+        (Corresponds to Tasks 5.6, 5.7, 5.8)
+        """
+        global maestro_data_global  # Need to modify the global list
+        print("\n--- 'Save Confirmed Selections' clicked ---")
+        if not self.vehicle_details or not self.processed_parts:
+            messagebox.showwarning(
+                "Cannot Save", "No valid search results available to save.")
+            return
+
+        selections_to_save = []
+        for part_info in self.processed_parts:
+            original_desc = part_info["original"]
+            selected_sku_var = self.selection_vars.get(original_desc)
+
+            if selected_sku_var:
+                selected_sku = selected_sku_var.get()
+                # Only save if a specific SKU was selected (not empty string for 'None')
+                if selected_sku:
+                    print(
+                        f"Selected for '{original_desc}': SKU = {selected_sku}")
+                    # Find the corresponding processed part info
+                    part_data = next(
+                        (p for p in self.processed_parts if p["original"] == original_desc), None)
+                    if part_data:
+                        selections_to_save.append({
+                            "vin_details": self.vehicle_details,
+                            "original_description": original_desc,
+                            "normalized_description": part_data["normalized"],
+                            "equivalencia_id": part_data["equivalencia_id"],
+                            "confirmed_sku": selected_sku
+                        })
+                else:
+                    print(f"Selected for '{original_desc}': None")
+            else:
+                print(f"No selection variable found for '{original_desc}'")
+
+        if not selections_to_save:
+            messagebox.showinfo(
+                "Nothing to Save", "No specific SKUs were selected for confirmation.")
+            return
+
+        # Task 5.7: Add to in-memory Maestro data (avoiding duplicates)
+        added_count = 0
+        skipped_count = 0
+
+        # Determine next Maestro_ID
+        max_id = 0
+        if maestro_data_global:
+            ids = [entry.get('Maestro_ID', 0) for entry in maestro_data_global if isinstance(
+                entry.get('Maestro_ID'), int)]
+            if ids:
+                max_id = max(ids)
+        next_id = max_id + 1
+
+        for selection in selections_to_save:
+            # Basic check for duplicates (VIN + Normalized Desc + SKU)
+            is_duplicate = False
+            for existing_entry in maestro_data_global:
+                if (existing_entry.get('VIN_Make') == selection['vin_details'].get('Make') and
+                    existing_entry.get('VIN_Model') == selection['vin_details'].get('Model') and
+                    # Simple year match for now
+                    existing_entry.get('VIN_Year_Min') == selection['vin_details'].get('Model Year') and
+                    existing_entry.get('Normalized_Description_Input') == selection['normalized_description'] and
+                        existing_entry.get('Confirmed_SKU') == selection['confirmed_sku']):
+                    is_duplicate = True
+                    break
+
+            if not is_duplicate:
+                new_entry = {
+                    'Maestro_ID': next_id,
+                    'VIN_Make': selection['vin_details'].get('Make'),
+                    'VIN_Model': selection['vin_details'].get('Model'),
+                    # Store single year for now
+                    'VIN_Year_Min': selection['vin_details'].get('Model Year'),
+                    # Store single year for now
+                    'VIN_Year_Max': selection['vin_details'].get('Model Year'),
+                    # Combine Series/Trim if available
+                    'VIN_Series_Trim': selection['vin_details'].get('Series'),
+                    'VIN_BodyStyle': selection['vin_details'].get('Body Class'),
+                    'Original_Description_Input': selection['original_description'],
+                    'Normalized_Description_Input': selection['normalized_description'],
+                    'Equivalencia_Row_ID': selection['equivalencia_id'],
+                    'Confirmed_SKU': selection['confirmed_sku'],
+                    'Confidence': 1.0,
+                    'Source': 'UserConfirmed',
+                    'Date_Added': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                maestro_data_global.append(new_entry)
+                added_count += 1
+                next_id += 1
+            else:
+                skipped_count += 1
+                print(
+                    f"Skipped duplicate: {selection['original_description']} - {selection['confirmed_sku']}")
+
+        # Task 5.8: Write back to Maestro.xlsx
+        if added_count > 0:
+            print(
+                f"Attempting to save {added_count} new entries to {DEFAULT_MAESTRO_PATH}...")
+            try:
+                # Define columns in the desired order for the Excel file
+                maestro_columns = [
+                    'Maestro_ID', 'VIN_Make', 'VIN_Model', 'VIN_Year_Min', 'VIN_Year_Max',
+                    'VIN_Series_Trim', 'VIN_BodyStyle', 'Original_Description_Input',
+                    'Normalized_Description_Input', 'Equivalencia_Row_ID', 'Confirmed_SKU',
+                    'Confidence', 'Source', 'Date_Added'
+                ]
+                df_to_save = pd.DataFrame(
+                    maestro_data_global, columns=maestro_columns)
+                df_to_save.to_excel(DEFAULT_MAESTRO_PATH, index=False)
+                messagebox.showinfo(
+                    "Save Successful", f"{added_count} new confirmation(s) saved to Maestro.xlsx.")
+                print(
+                    f"Successfully saved {added_count} new entries. Total Maestro entries: {len(maestro_data_global)}")
+            except Exception as e:
+                messagebox.showerror(
+                    "Save Error", f"Failed to write to Maestro.xlsx: {e}")
+                print(f"Error writing Maestro.xlsx: {e}")
+        elif skipped_count > 0:
+            messagebox.showinfo(
+                "Already Saved", "The selected confirmations were already present in Maestro.xlsx.")
+            print(f"Skipped {skipped_count} duplicate entries.")
+        else:
+            # This case shouldn't happen if the button was enabled, but good to handle
+            messagebox.showinfo(
+                "Nothing Saved", "No new confirmations were added.")
 
     def decode_vin_nhtsa(self, vin_number: str) -> dict | None:
         """
