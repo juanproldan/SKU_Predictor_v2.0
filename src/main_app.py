@@ -1,7 +1,9 @@
 import tkinter as tk
 from tkinter import ttk
+from tkinter import messagebox  # For showing error popups
 import os
 import pandas as pd
+import requests  # For NHTSA API
 # Assuming text_utils is in the same directory or src is in PYTHONPATH
 try:
     from utils.text_utils import normalize_text
@@ -139,13 +141,192 @@ class FixacarApp:
 
     def create_widgets(self):
         """Creates the GUI widgets."""
-        # Placeholder for UI elements
-        label = ttk.Label(
-            self.root, text="Fixacar SKU Finder - UI Placeholder")
-        label.pack(padx=10, pady=10)
+        # --- Input Frame ---
+        input_frame = ttk.LabelFrame(self.root, text="Input", padding=(10, 5))
+        input_frame.pack(padx=10, pady=10, fill="x", expand=False)
 
-        # More UI elements will be added in Phase 3 (VIN input, Descriptions, Button)
-        # and Phase 5 (Output area, selections)
+        # VIN Input
+        ttk.Label(input_frame, text="VIN (17 characters):").grid(
+            row=0, column=0, padx=5, pady=5, sticky="w")
+        self.vin_entry = ttk.Entry(input_frame, width=40)
+        self.vin_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+
+        # Part Descriptions Input
+        ttk.Label(input_frame, text="Part Descriptions (one per line):").grid(
+            row=1, column=0, padx=5, pady=5, sticky="nw")
+        self.parts_text = tk.Text(input_frame, width=60, height=10)
+        self.parts_text.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+        input_frame.columnconfigure(1, weight=1)  # Allow parts_text to expand
+
+        # Find SKUs Button
+        self.find_button = ttk.Button(
+            input_frame, text="Find SKUs", command=self.find_skus_handler)
+        self.find_button.grid(row=2, column=1, padx=5, pady=10, sticky="e")
+
+        # --- Output Frame (Placeholder for now) ---
+        output_frame = ttk.LabelFrame(
+            self.root, text="Results", padding=(10, 5))
+        output_frame.pack(padx=10, pady=10, fill="both", expand=True)
+
+        self.results_label = ttk.Label(
+            output_frame, text="Vehicle details and SKU suggestions will appear here.")
+        self.results_label.pack(padx=5, pady=5, anchor="nw")
+
+        # More UI elements will be added in Phase 5 (Output area, selections)
+
+    def find_skus_handler(self):
+        """
+        Handles the 'Find SKUs' button click.
+        This will orchestrate Tasks 3.3 through 3.10.
+        """
+        print("\n--- 'Find SKUs' button clicked ---")
+        vin = self.vin_entry.get().strip().upper()
+        part_descriptions_raw = self.parts_text.get("1.0", tk.END).strip()
+
+        print(f"VIN Entered: {vin}")
+        print(f"Part Descriptions Raw:\n{part_descriptions_raw}")
+
+        # Task 3.4: Basic VIN format validation
+        if not vin or len(vin) != 17:
+            messagebox.showerror(
+                "Invalid VIN", "VIN must be 17 characters long.")
+            self.results_label.config(
+                text="Error: VIN must be 17 characters long.")
+            return
+
+        self.results_label.config(text=f"Decoding VIN: {vin}...")
+        self.root.update_idletasks()  # Update GUI to show "Decoding VIN..."
+
+        # Task 3.5 & 3.6: Call NHTSA VIN Decoder API and Handle Response
+        vehicle_details = self.decode_vin_nhtsa(vin)
+
+        if not vehicle_details:
+            # decode_vin_nhtsa will show its own error message
+            self.results_label.config(
+                text=f"Failed to decode VIN: {vin}. Check console for details.")
+            return
+
+        # Task 3.7: Store extracted VIN details (vehicle_details is already a dict)
+        print(f"Decoded Vehicle Details: {vehicle_details}")
+
+        # Tasks 3.8, 3.9, 3.10: Process part descriptions
+        processed_parts = []
+        if part_descriptions_raw:
+            original_descriptions = [
+                line.strip() for line in part_descriptions_raw.splitlines() if line.strip()]
+            print(f"Original Descriptions List: {original_descriptions}")
+            for original_desc in original_descriptions:
+                normalized_desc = normalize_text(original_desc)
+                equivalencia_id = equivalencias_map_global.get(
+                    normalized_desc)  # Task 3.10
+                processed_parts.append({
+                    "original": original_desc,
+                    "normalized": normalized_desc,
+                    "equivalencia_id": equivalencia_id
+                })
+                print(
+                    f"Processed: '{original_desc}' -> Normalized: '{normalized_desc}', EqID: {equivalencia_id}")
+        else:
+            print("No part descriptions entered.")
+
+        # TODO: Implement Phase 4 (Search Logic using vehicle_details and processed_parts)
+
+        # For now, display decoded details and processed parts info
+        details_str = f"VIN: {vin}\n"
+        details_str += f"Make: {vehicle_details.get('Make', 'N/A')}\n"
+        details_str += f"Model: {vehicle_details.get('Model', 'N/A')}\n"
+        details_str += f"Year: {vehicle_details.get('Model Year', 'N/A')}\n"
+        details_str += f"Series: {vehicle_details.get('Series', 'N/A')}\n"
+        details_str += f"Body Style: {vehicle_details.get('Body Class', 'N/A')}\n"
+
+        details_str += "\n--- Processed Part Descriptions ---\n"
+        if processed_parts:
+            for part in processed_parts:
+                details_str += f"Original: {part['original']}\n"
+                details_str += f"  Normalized: {part['normalized']}\n"
+                details_str += f"  Equivalencia ID: {part['equivalencia_id']}\n"
+        else:
+            details_str += "(No descriptions entered)\n"
+
+        details_str += "\n(Search logic not yet implemented)"
+        self.results_label.config(text=details_str)
+
+    def decode_vin_nhtsa(self, vin_number: str) -> dict | None:
+        """
+        Decodes a VIN using the NHTSA vPIC API.
+        Returns a dictionary with selected vehicle details or None on error.
+        (Corresponds to Tasks 3.5, 3.6)
+        """
+        api_url = f"https://vpic.nhtsa.dot.gov/api/vehicles/decodevin/{vin_number}?format=json"
+        print(f"Calling NHTSA API: {api_url}")
+        try:
+            response = requests.get(api_url, timeout=10)  # 10 second timeout
+            response.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
+
+            data = response.json()
+
+            if not data or not data.get("Results"):
+                messagebox.showerror("VIN Decode Error",
+                                     "No results from NHTSA API for this VIN.")
+                print("NHTSA API: No results found in response.")
+                return None
+
+            results = data["Results"]
+            details = {}
+
+            # Extract specific fields as per PRD 3.2 (Make, Model, Year, Series, Body Style)
+            # The API response field names might vary. Common ones are used here.
+            for item in results:
+                variable_name = item.get("Variable", "")
+                value = item.get("Value", "")
+                if not value or value == "Not Applicable":  # Skip empty or "Not Applicable" values
+                    continue
+
+                if variable_name == "Make":
+                    details['Make'] = value
+                elif variable_name == "Model":
+                    details['Model'] = value
+                elif variable_name == "Model Year":
+                    details['Model Year'] = value
+                elif variable_name == "Series":
+                    details['Series'] = value
+                elif variable_name == "Body Class":
+                    # Common field for body style
+                    details['Body Class'] = value
+                # Add more fields if needed, e.g., Trim
+                elif variable_name == "Trim":
+                    details['Trim'] = value
+
+            if not details.get('Make') or not details.get('Model') or not details.get('Model Year'):
+                messagebox.showwarning(
+                    "VIN Decode Incomplete", "NHTSA API did not return Make, Model, or Year for this VIN.")
+                print(
+                    f"NHTSA API: Incomplete essential details. Full results: {results}")
+                # Return partial details if some are found, or None if critical ones are missing
+                # For now, let's return what we have if anything was found.
+
+            return details if details else None
+
+        except requests.exceptions.HTTPError as e:
+            messagebox.showerror(
+                "API Error", f"HTTP error calling NHTSA API: {e.response.status_code}\n{e.response.text[:200]}")
+            print(f"NHTSA API HTTPError: {e}")
+            return None
+        except requests.exceptions.RequestException as e:
+            messagebox.showerror(
+                "Network Error", f"Error calling NHTSA API: {e}")
+            print(f"NHTSA API RequestException: {e}")
+            return None
+        except json.JSONDecodeError:
+            messagebox.showerror("API Response Error",
+                                 "Invalid JSON response from NHTSA API.")
+            print("NHTSA API: JSONDecodeError parsing response.")
+            return None
+        except Exception as e:
+            messagebox.showerror(
+                "VIN Decode Error", f"An unexpected error occurred during VIN decoding: {e}")
+            print(f"NHTSA API unexpected error: {e}")
+            return None
 
 
 if __name__ == '__main__':
