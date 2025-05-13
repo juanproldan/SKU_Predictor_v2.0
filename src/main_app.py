@@ -900,22 +900,83 @@ class FixacarApp:
                 if suggestions_list:
                     self.selection_vars[original_desc] = tk.StringVar(
                         value=None)
+
+                    # Create a frame for manual entry that will be shown when "None of these" is selected
+                    manual_entry_frame = ttk.Frame(part_frame)
+
+                    # Create a StringVar to store the manual SKU entry
+                    self.manual_sku_vars = getattr(self, 'manual_sku_vars', {})
+                    self.manual_sku_vars[original_desc] = tk.StringVar()
+
+                    # Add radio buttons for each suggestion with color-coding based on confidence
                     for sku, info in suggestions_list:
-                        radio_text = f"SKU: {sku} (Conf: {info['confidence']:.3f}, Src: {info['source']})"
+                        confidence = info['confidence']
+                        radio_text = f"SKU: {sku} (Conf: {confidence:.3f}, Src: {info['source']})"
+
+                        # Create a frame to hold the radio button and confidence indicator
+                        suggestion_frame = ttk.Frame(part_frame)
+                        suggestion_frame.pack(
+                            anchor="w", padx=5, pady=2, fill="x")
+
+                        # Add color indicator based on confidence
+                        color_indicator = tk.Canvas(
+                            suggestion_frame, width=15, height=15, highlightthickness=0)
+
+                        # Color coding: green for high confidence, yellow for medium, red for low
+                        if confidence >= 0.7:
+                            color = "#4CAF50"  # Green
+                        elif confidence >= 0.4:
+                            color = "#FFC107"  # Yellow/Amber
+                        else:
+                            color = "#F44336"  # Red
+
+                        color_indicator.create_oval(
+                            2, 2, 13, 13, fill=color, outline=color)
+                        color_indicator.pack(side=tk.LEFT, padx=(0, 5))
+
+                        # Add the radio button
                         rb = ttk.Radiobutton(
-                            part_frame,
+                            suggestion_frame,
                             text=radio_text,
                             variable=self.selection_vars[original_desc],
                             value=sku
                         )
-                        rb.pack(anchor="w", padx=5, pady=2, fill="x")
+                        rb.pack(side=tk.LEFT, fill="x", expand=True)
+
+                    # Add "None of these" radio button that will show the manual entry field
+                    rb_none_frame = ttk.Frame(part_frame)
+                    rb_none_frame.pack(anchor="w", padx=5, pady=2, fill="x")
+
                     rb_none = ttk.Radiobutton(
-                        part_frame,
+                        rb_none_frame,
                         text="None of these / Manual Entry",
                         variable=self.selection_vars[original_desc],
-                        value=""
+                        value="",
+                        command=lambda desc=original_desc: self._toggle_manual_entry(
+                            desc, manual_entry_frame)
                     )
-                    rb_none.pack(anchor="w", padx=5, pady=2, fill="x")
+                    rb_none.pack(side=tk.LEFT, fill="x", expand=True)
+
+                    # Create manual entry field and button
+                    manual_entry_label = ttk.Label(
+                        manual_entry_frame, text="Enter SKU:")
+                    manual_entry_label.pack(side=tk.LEFT, padx=(20, 5))
+
+                    manual_entry = ttk.Entry(manual_entry_frame,
+                                             textvariable=self.manual_sku_vars[original_desc],
+                                             width=15)
+                    manual_entry.pack(side=tk.LEFT, padx=5)
+
+                    manual_entry_button = ttk.Button(
+                        manual_entry_frame,
+                        text="Confirm",
+                        command=lambda desc=original_desc: self._confirm_manual_sku(
+                            desc)
+                    )
+                    manual_entry_button.pack(side=tk.LEFT, padx=5)
+
+                    # Initially hide the manual entry frame
+                    manual_entry_frame.pack_forget()
                 else:
                     ttk.Label(part_frame, text="  (No suggestions found)").pack(
                         anchor="w", padx=15, pady=5)
@@ -1030,6 +1091,45 @@ class FixacarApp:
         print(
             f"Updated layout to {num_columns} complete columns with {len(self.part_frames_widgets)} items")
 
+    def _toggle_manual_entry(self, description, manual_entry_frame):
+        """
+        Toggle the visibility of the manual entry frame when "None of these" is selected.
+
+        Args:
+            description: The part description
+            manual_entry_frame: The frame containing the manual entry widgets
+        """
+        # Check if the "None of these" option is selected
+        if self.selection_vars[description].get() == "":
+            # Show the manual entry frame
+            manual_entry_frame.pack(anchor="w", padx=20, pady=5, fill="x")
+        else:
+            # Hide the manual entry frame
+            manual_entry_frame.pack_forget()
+
+    def _confirm_manual_sku(self, description):
+        """
+        Handle the confirmation of a manually entered SKU.
+
+        Args:
+            description: The part description
+        """
+        # Get the manually entered SKU
+        manual_sku = self.manual_sku_vars[description].get().strip()
+
+        if manual_sku:
+            # Set the selection variable to the manually entered SKU
+            self.selection_vars[description].set(manual_sku)
+
+            # Show a confirmation message
+            print(f"Manual SKU confirmed for '{description}': {manual_sku}")
+            messagebox.showinfo("Manual SKU Confirmed",
+                                f"SKU '{manual_sku}' has been confirmed for '{description}'.")
+        else:
+            # Show an error message if the SKU is empty
+            messagebox.showerror("Invalid SKU",
+                                 "Please enter a valid SKU or select one of the suggestions.")
+
     def save_selections_handler(self):
         """
         Handles the 'Save Confirmed Selections' button click.
@@ -1051,8 +1151,17 @@ class FixacarApp:
             if selected_sku_var:
                 selected_sku = selected_sku_var.get()
                 if selected_sku:
+                    # Check if this is a manually entered SKU
+                    is_manual = True
+                    for sku, _ in self.current_suggestions.get(original_desc, []):
+                        if sku == selected_sku:
+                            is_manual = False
+                            break
+
+                    source = "UserManualEntry" if is_manual else "UserConfirmed"
                     print(
-                        f"Selected for '{original_desc}': SKU = {selected_sku}")
+                        f"Selected for '{original_desc}': SKU = {selected_sku} (Source: {source})")
+
                     part_data = next(
                         (p for p in self.processed_parts if p["original"] == original_desc), None)
                     if part_data:
@@ -1061,7 +1170,8 @@ class FixacarApp:
                             "original_description": original_desc,
                             "normalized_description": part_data["normalized"],
                             "equivalencia_id": part_data["equivalencia_id"],
-                            "confirmed_sku": selected_sku
+                            "confirmed_sku": selected_sku,
+                            "source": source
                         })
                 else:
                     print(f"Selected for '{original_desc}': None")
@@ -1108,7 +1218,8 @@ class FixacarApp:
                     'Equivalencia_Row_ID': selection['equivalencia_id'],
                     'Confirmed_SKU': selection['confirmed_sku'],
                     'Confidence': 1.0,
-                    'Source': 'UserConfirmed',
+                    # Use the source from selection
+                    'Source': selection.get('source', 'UserConfirmed'),
                     'Date_Added': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
                 maestro_data_global.append(new_entry)
