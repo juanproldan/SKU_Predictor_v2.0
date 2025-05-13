@@ -134,7 +134,8 @@ cython_debug/
 Consolidado.json
 Consolidado_chunk_*.json
 Consolidado_cleaned.json
-fixacar_history.db
+data/fixacar_history.db
+data/consolidado.db
 *.db # General rule for SQLite databases
 *.sqlite
 *.sqlite3
@@ -142,6 +143,20 @@ fixacar_history.db
 # Excel temp files
 ~$*.xlsx
 ~$*.xls
+
+# Model files
+models/*/*.h5
+models/*/*.keras
+models/*/*.pth
+models/*/*.pt
+models/*/*.bin
+models/*/*.onnx
+
+# Exclude large source files
+Source_Files/
+
+# Exclude virtual environments
+venv_tf/
 
 # Other potentially large files or sensitive info
 # credentials.json

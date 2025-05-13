@@ -1,3 +1,6 @@
 pandas
 openpyxl
 requests
+scikit-learn
+joblib # For saving/loading models
+tensorflow # For neural networks

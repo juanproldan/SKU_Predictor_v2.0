@@ -273,8 +273,17 @@ def main():
     process_consolidado_data(
         conn, consolidado_file_to_process, equivalencias_map)
 
+    # Add a query to count rows in the table after processing
     if conn:
-        conn.close()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM historical_parts")
+            row_count = cursor.fetchone()[0]
+            print(f"Total rows in historical_parts table: {row_count}")
+        except Exception as e:
+            print(f"Error querying row count: {e}")
+        finally:
+            conn.close()
 
     print("--- Offline Data Processing Finished ---")
 
