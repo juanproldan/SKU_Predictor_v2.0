@@ -348,10 +348,19 @@ class FixacarApp:
         self.parts_text.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
         input_frame.columnconfigure(1, weight=1)  # Allow parts_text to expand
 
-        # Find SKUs Button
+        # Create a custom style for buttons with better contrast
+        self.style = ttk.Style()
+        self.style.configure("Accent.TButton",
+                             background="#4CAF50",  # Green background
+                             foreground="#ffffff",  # White text
+                             font=("", 10, "bold"))  # Bold font
+
+        # Find SKUs Button - moved to the position indicated by the red arrow (between VIN and Part Descriptions)
         self.find_button = ttk.Button(
-            input_frame, text="Find SKUs", command=self.find_skus_handler)
-        self.find_button.grid(row=2, column=1, padx=5, pady=10, sticky="e")
+            input_frame, text="Find SKUs",
+            command=self.find_skus_handler,
+            style="Accent.TButton")  # Apply the custom style
+        self.find_button.grid(row=0, column=2, padx=5, pady=5, sticky="w")
 
         # --- Vehicle Details Frame (Right Column) ---
         self.vehicle_details_frame = ttk.LabelFrame(
@@ -425,8 +434,12 @@ class FixacarApp:
                           expand=False, pady=(0, 10), padx=10)
 
         self.save_button = ttk.Button(
-            bottom_frame, text="Save Confirmed Selections", command=self.save_selections_handler, state=tk.DISABLED)
-        self.save_button.pack()  # Pack inside the bottom_frame
+            bottom_frame, text="Save Confirmed Selections",
+            command=self.save_selections_handler,
+            state=tk.DISABLED,
+            style="Accent.TButton")  # Apply the same custom style for consistency
+        # Pack inside the bottom_frame with some padding
+        self.save_button.pack(pady=5)
 
         # Instance variables
         self.vehicle_details = None
