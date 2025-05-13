@@ -356,6 +356,12 @@ class FixacarApp:
                              foreground="#ffffff",  # White text
                              font=("", 10, "bold"))  # Bold font
 
+        # Add a style for the manual entry confirm button
+        self.style.configure("Manual.TButton",
+                             background="#333333",  # Dark gray background
+                             foreground="#ffffff",  # White text
+                             font=("", 9, "bold"))  # Bold font
+
         # Create a custom button class that uses a dark background with white text
         class DarkButton(tk.Button):
             def __init__(self, master=None, **kwargs):
@@ -502,12 +508,13 @@ class FixacarApp:
                 device=device
             )
 
-            if predicted_sku:
+            if predicted_sku and predicted_sku.strip():
                 print(
                     f"  SKU NN Prediction for '{description}': {predicted_sku} (Confidence: {confidence:.4f})")
                 return predicted_sku, confidence
             else:
-                print(f"  SKU NN Prediction failed for '{description}'")
+                print(
+                    f"  SKU NN Prediction failed for '{description}' or returned empty SKU")
                 return None
 
         except ValueError as ve:
@@ -660,8 +667,53 @@ class FixacarApp:
                 line.strip() for line in part_descriptions_raw.splitlines() if line.strip()]
             print(f"Original Descriptions List: {original_descriptions}")
             for original_desc in original_descriptions:
-                normalized_desc = normalize_text(original_desc)
-                equivalencia_id = equivalencias_map_global.get(normalized_desc)
+                # First try standard normalization
+                standard_normalized_desc = normalize_text(original_desc)
+                equivalencia_id = equivalencias_map_global.get(
+                    standard_normalized_desc)
+
+                # If no match found with standard normalization, try fuzzy normalization
+                if equivalencia_id is None:
+                    fuzzy_normalized_desc = normalize_text(
+                        original_desc, use_fuzzy=True)
+                    print(
+                        f"  Fuzzy normalized: '{original_desc}' -> '{fuzzy_normalized_desc}'")
+
+                    # Try to find a direct match with the fuzzy normalized text
+                    equivalencia_id = equivalencias_map_global.get(
+                        fuzzy_normalized_desc)
+
+                    # If still no match, try to find the closest match in the equivalencias map
+                    if equivalencia_id is None and equivalencias_map_global:
+                        # Get all normalized terms from the equivalencias map
+                        normalized_terms = list(
+                            equivalencias_map_global.keys())
+
+                        # Try to find the best match with a similarity threshold of 0.8
+                        try:
+                            from utils.fuzzy_matcher import find_best_match
+                            match_result = find_best_match(
+                                fuzzy_normalized_desc, normalized_terms, threshold=0.8)
+
+                            if match_result:
+                                best_match, similarity = match_result
+                                equivalencia_id = equivalencias_map_global.get(
+                                    best_match)
+                                print(
+                                    f"  Found fuzzy match: '{best_match}' (similarity: {similarity:.2f}, EqID: {equivalencia_id})")
+                        except ImportError:
+                            # If fuzzy_matcher is not available, we'll continue without it
+                            pass
+
+                    # Use the fuzzy normalized description if it found a match
+                    if equivalencia_id is not None:
+                        normalized_desc = fuzzy_normalized_desc
+                    else:
+                        # Fall back to standard normalization if no match found
+                        normalized_desc = standard_normalized_desc
+                else:
+                    normalized_desc = standard_normalized_desc
+
                 self.processed_parts.append({
                     "original": original_desc,
                     "normalized": normalized_desc,
@@ -737,7 +789,7 @@ class FixacarApp:
                                  str(maestro_entry.get('VIN_Year_Min')) == vin_year_str)
                         if match:
                             sku = maestro_entry.get('Confirmed_SKU')
-                            if sku and sku not in suggestions:
+                            if sku and sku.strip() and sku not in suggestions:
                                 suggestions[sku] = {
                                     "confidence": 1.0, "source": "Maestro"}
                                 print(
@@ -758,7 +810,7 @@ class FixacarApp:
                         results = cursor.fetchall()
                         total_matches = sum(row[1] for row in results)
                         for sku, frequency in results:
-                            if sku not in suggestions:
+                            if sku and sku.strip() and sku not in suggestions:
                                 confidence = round(
                                     0.5 + 0.4 * (frequency / total_matches), 3) if total_matches > 0 else 0.5
                                 suggestions[sku] = {
@@ -769,39 +821,113 @@ class FixacarApp:
                         print(
                             f"    Error querying SQLite DB (ID Match): {db_err}")
 
-                # Fallback Search (Adjust matching)
+                # Fallback Search with Fuzzy Matching
                 if eq_id is None:  # This block is for fallback if no Equivalencia_Row_ID
                     print(
                         f"  Fallback Search (Normalized: '{normalized_desc}')...")
-                    # Fallback in Maestro
-                    for maestro_entry in maestro_data_global:
-                        # Match on Make, Year, Normalized Desc
-                        if (maestro_entry.get('Normalized_Description_Input') == normalized_desc and
-                            maestro_entry.get('VIN_Make') == vin_make and
-                                str(maestro_entry.get('VIN_Year_Min')) == vin_year_str):
-                            sku = maestro_entry.get('Confirmed_SKU')
-                            if sku and sku not in suggestions:
-                                suggestions[sku] = {
-                                    "confidence": 0.2, "source": "Maestro (Fallback)"}
-                                print(
-                                    f"    Found in Maestro (Fallback): {sku} (Conf: 0.2)")
-                    # Fallback in SQLite
+
+                    # Fallback in Maestro with fuzzy matching
+                    if maestro_data_global:
+                        # Get all normalized descriptions from Maestro
+                        maestro_normalized_descs = [
+                            entry.get('Normalized_Description_Input', '')
+                            for entry in maestro_data_global
+                            if entry.get('VIN_Make') == vin_make and
+                            str(entry.get('VIN_Year_Min')) == vin_year_str
+                        ]
+
+                        # Try to find fuzzy matches
+                        try:
+                            from utils.fuzzy_matcher import get_fuzzy_matches
+                            fuzzy_matches = get_fuzzy_matches(
+                                normalized_desc, maestro_normalized_descs, threshold=0.8)
+
+                            for match_desc, similarity in fuzzy_matches:
+                                # Find all Maestro entries with this normalized description
+                                for maestro_entry in maestro_data_global:
+                                    if (maestro_entry.get('Normalized_Description_Input') == match_desc and
+                                        maestro_entry.get('VIN_Make') == vin_make and
+                                            str(maestro_entry.get('VIN_Year_Min')) == vin_year_str):
+                                        sku = maestro_entry.get(
+                                            'Confirmed_SKU')
+                                        if sku and sku.strip() and sku not in suggestions:
+                                            # Adjust confidence based on similarity
+                                            confidence = 0.2 * similarity
+                                            suggestions[sku] = {
+                                                "confidence": confidence,
+                                                "source": f"Maestro (Fuzzy: {similarity:.2f})"
+                                            }
+                                            print(
+                                                f"    Found in Maestro (Fuzzy): {sku} (Sim: {similarity:.2f}, Conf: {confidence:.2f})")
+                        except ImportError:
+                            # Fall back to exact matching if fuzzy_matcher is not available
+                            for maestro_entry in maestro_data_global:
+                                # Match on Make, Year, Normalized Desc
+                                if (maestro_entry.get('Normalized_Description_Input') == normalized_desc and
+                                    maestro_entry.get('VIN_Make') == vin_make and
+                                        str(maestro_entry.get('VIN_Year_Min')) == vin_year_str):
+                                    sku = maestro_entry.get('Confirmed_SKU')
+                                    if sku and sku.strip() and sku not in suggestions:
+                                        suggestions[sku] = {
+                                            "confidence": 0.2, "source": "Maestro (Fallback)"}
+                                        print(
+                                            f"    Found in Maestro (Fallback): {sku} (Conf: 0.2)")
+
+                    # Fallback in SQLite with fuzzy matching
                     if vin_year is not None:
                         try:
-                            # Query without Model
+                            # First get all normalized descriptions from the database for this make and year
                             cursor.execute("""
-                                SELECT sku, COUNT(*) as frequency
+                                SELECT DISTINCT normalized_description
                                 FROM historical_parts
-                                WHERE vin_make = ? AND vin_year = ? AND normalized_description = ?
-                                GROUP BY sku
-                            """, (vin_make, vin_year, normalized_desc))  # Removed vin_model
-                            results = cursor.fetchall()
-                            for sku, frequency in results:
-                                if sku not in suggestions:
-                                    suggestions[sku] = {
-                                        "confidence": 0.1, "source": f"DB (Text Fallback)"}
-                                    print(
-                                        f"    Found in DB (Fallback): {sku} (Conf: 0.1)")
+                                WHERE vin_make = ? AND vin_year = ?
+                            """, (vin_make, vin_year))
+
+                            db_normalized_descs = [row[0]
+                                                   for row in cursor.fetchall()]
+
+                            # Try to find fuzzy matches
+                            try:
+                                from utils.fuzzy_matcher import get_fuzzy_matches
+                                fuzzy_matches = get_fuzzy_matches(
+                                    normalized_desc, db_normalized_descs, threshold=0.8)
+
+                                for match_desc, similarity in fuzzy_matches:
+                                    # Query for SKUs with this normalized description
+                                    cursor.execute("""
+                                        SELECT sku, COUNT(*) as frequency
+                                        FROM historical_parts
+                                        WHERE vin_make = ? AND vin_year = ? AND normalized_description = ?
+                                        GROUP BY sku
+                                    """, (vin_make, vin_year, match_desc))
+
+                                    results = cursor.fetchall()
+                                    for sku, frequency in results:
+                                        if sku and sku.strip() and sku not in suggestions:
+                                            # Adjust confidence based on similarity
+                                            confidence = 0.1 * similarity
+                                            suggestions[sku] = {
+                                                "confidence": confidence,
+                                                "source": f"DB (Fuzzy: {similarity:.2f})"
+                                            }
+                                            print(
+                                                f"    Found in DB (Fuzzy): {sku} (Sim: {similarity:.2f}, Freq: {frequency}, Conf: {confidence:.2f})")
+                            except ImportError:
+                                # Fall back to exact matching if fuzzy_matcher is not available
+                                cursor.execute("""
+                                    SELECT sku, COUNT(*) as frequency
+                                    FROM historical_parts
+                                    WHERE vin_make = ? AND vin_year = ? AND normalized_description = ?
+                                    GROUP BY sku
+                                """, (vin_make, vin_year, normalized_desc))
+
+                                results = cursor.fetchall()
+                                for sku, frequency in results:
+                                    if sku and sku.strip() and sku not in suggestions:
+                                        suggestions[sku] = {
+                                            "confidence": 0.1, "source": f"DB (Text Fallback)"}
+                                        print(
+                                            f"    Found in DB (Fallback): {sku} (Conf: 0.1)")
                         except Exception as db_err:
                             print(
                                 f"    Error querying SQLite DB (Fallback): {db_err}")
@@ -831,12 +957,12 @@ class FixacarApp:
                     )
                     if sku_nn_output:
                         nn_sku, nn_confidence = sku_nn_output
-                        if nn_sku and nn_sku not in suggestions:  # Add if new
+                        if nn_sku and nn_sku.strip() and nn_sku not in suggestions:  # Add if new and not empty
                             suggestions[nn_sku] = {"confidence": float(
                                 nn_confidence), "source": "SKU-NN"}
                             print(
                                 f"    Found via SKU-NN: {nn_sku} (Conf: {nn_confidence:.4f})")
-                        elif nn_sku and nn_sku in suggestions and suggestions[nn_sku]["source"] != "Maestro":
+                        elif nn_sku and nn_sku.strip() and nn_sku in suggestions and suggestions[nn_sku]["source"] != "Maestro":
                             # Optionally update if NN confidence is higher than other non-Maestro sources
                             if float(nn_confidence) > suggestions[nn_sku]["confidence"]:
                                 suggestions[nn_sku] = {"confidence": float(
@@ -924,8 +1050,9 @@ class FixacarApp:
             for part_info in enumerate(self.processed_parts):
                 # Use index 1 to get the actual part_info dict
                 original_desc = part_info[1]["original"]
-                suggestions_list = self.current_suggestions.get(
-                    original_desc, [])
+                # Get suggestions and filter out any empty SKUs that might have slipped through
+                suggestions_list = [(sku, info) for sku, info in self.current_suggestions.get(original_desc, [])
+                                    if sku and sku.strip()]
 
                 # Create part_frame but do not grid it yet. It will be gridded by _resize_results_columns
                 part_frame = ttk.LabelFrame(
@@ -942,17 +1069,19 @@ class FixacarApp:
                     self.selection_vars[original_desc] = tk.StringVar(
                         value=None)
 
-                    # Create a frame for manual entry that will be shown when "None of these" is selected
-                    manual_entry_frame = ttk.Frame(part_frame)
-
                     # Create a StringVar to store the manual SKU entry
                     self.manual_sku_vars = getattr(self, 'manual_sku_vars', {})
                     self.manual_sku_vars[original_desc] = tk.StringVar()
 
+                    # Add a separator before the radio buttons
+                    ttk.Separator(part_frame, orient='horizontal').pack(
+                        fill='x', pady=5)
+
                     # Add radio buttons for each suggestion with color-coding based on confidence
                     for sku, info in suggestions_list:
                         confidence = info['confidence']
-                        radio_text = f"SKU: {sku} (Conf: {confidence:.3f}, Src: {info['source']})"
+                        source_text = info['source']
+                        radio_text = f"SKU: {sku} (Conf: {confidence:.3f}, Src: {source_text})"
 
                         # Create a frame to hold the radio button and confidence indicator
                         suggestion_frame = ttk.Frame(part_frame)
@@ -984,43 +1113,105 @@ class FixacarApp:
                         )
                         rb.pack(side=tk.LEFT, fill="x", expand=True)
 
-                    # Add "None of these" radio button that will show the manual entry field
+                    # Add "Manual entry" radio button with text field at the bottom
                     rb_none_frame = ttk.Frame(part_frame)
                     rb_none_frame.pack(anchor="w", padx=5, pady=2, fill="x")
 
                     rb_none = ttk.Radiobutton(
                         rb_none_frame,
-                        text="None of these / Manual Entry",
+                        text="Manual entry",
                         variable=self.selection_vars[original_desc],
-                        value="",
-                        command=lambda desc=original_desc: self._toggle_manual_entry(
-                            desc, manual_entry_frame)
+                        value=""
                     )
-                    rb_none.pack(side=tk.LEFT, fill="x", expand=True)
+                    rb_none.pack(side=tk.LEFT, padx=(0, 5))
 
-                    # Create manual entry field and button
-                    manual_entry_label = ttk.Label(
-                        manual_entry_frame, text="Enter SKU:")
-                    manual_entry_label.pack(side=tk.LEFT, padx=(20, 5))
-
-                    manual_entry = ttk.Entry(manual_entry_frame,
-                                             textvariable=self.manual_sku_vars[original_desc],
-                                             width=15)
+                    # Add the manual entry field next to the radio button
+                    manual_entry = ttk.Entry(
+                        rb_none_frame,
+                        textvariable=self.manual_sku_vars[original_desc],
+                        width=15
+                    )
                     manual_entry.pack(side=tk.LEFT, padx=5)
 
-                    manual_entry_button = ttk.Button(
-                        manual_entry_frame,
-                        text="Confirm",
-                        command=lambda desc=original_desc: self._confirm_manual_sku(
-                            desc)
-                    )
-                    manual_entry_button.pack(side=tk.LEFT, padx=5)
+                    # Add trace to auto-select the radio button when typing
+                    def _on_manual_entry_change(*_, desc=original_desc):
+                        # The _ parameter captures all arguments but we don't use them
+                        # They are required by trace_add
+                        if self.manual_sku_vars[desc].get().strip():
+                            self.selection_vars[desc].set("")
 
-                    # Initially hide the manual entry frame
-                    manual_entry_frame.pack_forget()
+                    self.manual_sku_vars[original_desc].trace_add(
+                        "write", _on_manual_entry_change)
+
+                    # Add "I don't know the SKU" radio button
+                    rb_unknown_frame = ttk.Frame(part_frame)
+                    rb_unknown_frame.pack(anchor="w", padx=5, pady=2, fill="x")
+
+                    rb_unknown = ttk.Radiobutton(
+                        rb_unknown_frame,
+                        text="I don't know the SKU",
+                        variable=self.selection_vars[original_desc],
+                        value="UNKNOWN"
+                    )
+                    rb_unknown.pack(side=tk.LEFT, fill="x", expand=True)
                 else:
+                    # Display a label indicating no suggestions were found
                     ttk.Label(part_frame, text="  (No suggestions found)").pack(
                         anchor="w", padx=15, pady=5)
+
+                    # Still create selection_vars and manual_sku_vars for this part
+                    self.selection_vars[original_desc] = tk.StringVar(
+                        value=None)
+
+                    # Create a StringVar to store the manual SKU entry
+                    self.manual_sku_vars = getattr(self, 'manual_sku_vars', {})
+                    self.manual_sku_vars[original_desc] = tk.StringVar()
+
+                    # Add a separator
+                    ttk.Separator(part_frame, orient='horizontal').pack(
+                        fill='x', pady=5)
+
+                    # Add "Manual entry" radio button with text field
+                    rb_none_frame = ttk.Frame(part_frame)
+                    rb_none_frame.pack(anchor="w", padx=5, pady=2, fill="x")
+
+                    rb_none = ttk.Radiobutton(
+                        rb_none_frame,
+                        text="Manual entry",
+                        variable=self.selection_vars[original_desc],
+                        value=""
+                    )
+                    rb_none.pack(side=tk.LEFT, padx=(0, 5))
+
+                    # Add the manual entry field next to the radio button
+                    manual_entry = ttk.Entry(
+                        rb_none_frame,
+                        textvariable=self.manual_sku_vars[original_desc],
+                        width=15
+                    )
+                    manual_entry.pack(side=tk.LEFT, padx=5)
+
+                    # Add trace to auto-select the radio button when typing
+                    def _on_manual_entry_change(*_, desc=original_desc):
+                        # The _ parameter captures all arguments but we don't use them
+                        # They are required by trace_add
+                        if self.manual_sku_vars[desc].get().strip():
+                            self.selection_vars[desc].set("")
+
+                    self.manual_sku_vars[original_desc].trace_add(
+                        "write", _on_manual_entry_change)
+
+                    # Add "I don't know the SKU" radio button
+                    rb_unknown_frame = ttk.Frame(part_frame)
+                    rb_unknown_frame.pack(anchor="w", padx=5, pady=2, fill="x")
+
+                    rb_unknown = ttk.Radiobutton(
+                        rb_unknown_frame,
+                        text="I don't know the SKU",
+                        variable=self.selection_vars[original_desc],
+                        value="UNKNOWN"
+                    )
+                    rb_unknown.pack(side=tk.LEFT, fill="x", expand=True)
 
             # Initial layout + bind configure event for responsiveness
             print("Initializing responsive layout...")
@@ -1032,14 +1223,17 @@ class FixacarApp:
                 "<Configure>", self._on_results_configure)
             self.root.bind("<Configure>", self._on_results_configure)
 
-            if any(self.current_suggestions.values()):
+            # Enable save button if there are any processed parts with selection options
+            # (either suggestions or manual entry options)
+            if self.processed_parts:
                 self.save_button.config(state=tk.NORMAL)
             else:
                 self.save_button.config(state=tk.DISABLED)
 
-    def _on_results_configure(self, event=None):
+    def _on_results_configure(self, _=None):
         # This method is called when the results_grid_container is resized
         # We add a small delay (debounce) to avoid excessive re-layouts during rapid resizing
+        # The event parameter is unused but required by the bind method
         if hasattr(self, '_after_id_resize'):
             self.root.after_cancel(self._after_id_resize)
         self._after_id_resize = self.root.after(
@@ -1132,44 +1326,10 @@ class FixacarApp:
         print(
             f"Updated layout to {num_columns} complete columns with {len(self.part_frames_widgets)} items")
 
-    def _toggle_manual_entry(self, description, manual_entry_frame):
-        """
-        Toggle the visibility of the manual entry frame when "None of these" is selected.
+    # The _toggle_manual_entry method is no longer needed as manual entry is always visible
 
-        Args:
-            description: The part description
-            manual_entry_frame: The frame containing the manual entry widgets
-        """
-        # Check if the "None of these" option is selected
-        if self.selection_vars[description].get() == "":
-            # Show the manual entry frame
-            manual_entry_frame.pack(anchor="w", padx=20, pady=5, fill="x")
-        else:
-            # Hide the manual entry frame
-            manual_entry_frame.pack_forget()
-
-    def _confirm_manual_sku(self, description):
-        """
-        Handle the confirmation of a manually entered SKU.
-
-        Args:
-            description: The part description
-        """
-        # Get the manually entered SKU
-        manual_sku = self.manual_sku_vars[description].get().strip()
-
-        if manual_sku:
-            # Set the selection variable to the manually entered SKU
-            self.selection_vars[description].set(manual_sku)
-
-            # Show a confirmation message
-            print(f"Manual SKU confirmed for '{description}': {manual_sku}")
-            messagebox.showinfo("Manual SKU Confirmed",
-                                f"SKU '{manual_sku}' has been confirmed for '{description}'.")
-        else:
-            # Show an error message if the SKU is empty
-            messagebox.showerror("Invalid SKU",
-                                 "Please enter a valid SKU or select one of the suggestions.")
+    # The _confirm_manual_sku method is no longer needed as the manual entry
+    # automatically selects the radio button and will be saved with the "Save Confirmed Selections" button
 
     def save_selections_handler(self):
         """
@@ -1192,14 +1352,16 @@ class FixacarApp:
             if selected_sku_var:
                 selected_sku = selected_sku_var.get()
                 if selected_sku:
-                    # Check if this is a manually entered SKU
-                    is_manual = True
-                    for sku, _ in self.current_suggestions.get(original_desc, []):
-                        if sku == selected_sku:
-                            is_manual = False
-                            break
-
-                    source = "UserManualEntry" if is_manual else "UserConfirmed"
+                    # Check if this is a manually entered SKU or unknown
+                    if selected_sku == "UNKNOWN":
+                        source = "UserUnknown"
+                    else:
+                        is_manual = True
+                        for sku, _ in self.current_suggestions.get(original_desc, []):
+                            if sku == selected_sku:
+                                is_manual = False
+                                break
+                        source = "UserManualEntry" if is_manual else "UserConfirmed"
                     print(
                         f"Selected for '{original_desc}': SKU = {selected_sku} (Source: {source})")
 

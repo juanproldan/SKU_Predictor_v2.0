@@ -1,8 +1,32 @@
 import unicodedata
 import re
+from typing import Optional, List, Tuple
+
+# Import our fuzzy matching utilities
+try:
+    from utils.fuzzy_matcher import fuzzy_normalize_text, get_fuzzy_matches, find_best_match
+except ImportError:
+    # Fallback for direct execution if src is not in path
+    try:
+        from .fuzzy_matcher import fuzzy_normalize_text, get_fuzzy_matches, find_best_match
+    except ImportError:
+        # If fuzzy_matcher is not available, define placeholder functions
+        def fuzzy_normalize_text(text: str) -> str:
+            """Placeholder for fuzzy_normalize_text if module not available"""
+            return normalize_text(text)
+
+        def get_fuzzy_matches(query: str, candidates: List[str], threshold: float = 0.7) -> List[Tuple[str, float]]:
+            """Placeholder for get_fuzzy_matches if module not available"""
+            return [(c, 1.0) for c in candidates if c == query]
+
+        def find_best_match(query: str, candidates: List[str], threshold: float = 0.7) -> Optional[Tuple[str, float]]:
+            """Placeholder for find_best_match if module not available"""
+            if query in candidates:
+                return (query, 1.0)
+            return None
 
 
-def normalize_text(text: str) -> str:
+def normalize_text(text: str, use_fuzzy: bool = False) -> str:
     """
     Normalizes a text string according to the project's requirements:
     - Converts to lowercase.
@@ -10,10 +34,22 @@ def normalize_text(text: str) -> str:
     - Standardizes internal whitespace (multiple spaces to one).
     - Removes common punctuation (keeps alphanumeric and spaces).
     - Handles accented characters/diacritics (e.g., converts 'á' to 'a').
+
+    Args:
+        text: The input text to normalize
+        use_fuzzy: Whether to use enhanced fuzzy normalization (default: False)
+
+    Returns:
+        Normalized text string
     """
     if not isinstance(text, str):
         return ""  # Or raise an error, depending on desired handling for non-strings
 
+    if use_fuzzy:
+        # Use the enhanced fuzzy normalization
+        return fuzzy_normalize_text(text)
+
+    # Standard normalization (original implementation)
     # 1. Convert to lowercase
     text = text.lower()
 
