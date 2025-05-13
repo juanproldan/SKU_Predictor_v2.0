@@ -329,8 +329,20 @@ class FixacarApp:
         self.vin_entry.grid(row=0, column=1, padx=5, pady=5, sticky="w")
 
         # Part Descriptions Input
-        ttk.Label(input_frame, text="Part Descriptions (one per line):").grid(
+        # Create a frame to hold the label and the instruction text
+        part_desc_label_frame = ttk.Frame(input_frame)
+        part_desc_label_frame.grid(
             row=1, column=0, padx=5, pady=5, sticky="nw")
+
+        # Main label
+        ttk.Label(part_desc_label_frame, text="Part Descriptions").grid(
+            row=0, column=0, sticky="nw")
+
+        # Instruction text below the main label
+        ttk.Label(part_desc_label_frame, text="(one per line)", font=("", 8)).grid(
+            row=1, column=0, sticky="nw")
+
+        # Text input field
         self.parts_text = tk.Text(
             input_frame, width=40, height=5)  # Reduced width
         self.parts_text.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
