@@ -342,24 +342,41 @@ class FixacarApp:
         ttk.Label(part_desc_label_frame, text="(one per line)", font=("", 8)).grid(
             row=1, column=0, sticky="nw")
 
-        # Text input field
+        # Text input field - now spans across columns 1 and 2 to continue under the Find SKUs button
         self.parts_text = tk.Text(
             input_frame, width=40, height=5)  # Reduced width
-        self.parts_text.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+        self.parts_text.grid(row=1, column=1, padx=5,
+                             pady=5, sticky="ew", columnspan=2)
         input_frame.columnconfigure(1, weight=1)  # Allow parts_text to expand
 
         # Create a custom style for buttons with better contrast
         self.style = ttk.Style()
         self.style.configure("Accent.TButton",
-                             background="#4CAF50",  # Green background
+                             background="#333333",  # Dark gray background
                              foreground="#ffffff",  # White text
                              font=("", 10, "bold"))  # Bold font
 
+        # Create a custom button class that uses a dark background with white text
+        class DarkButton(tk.Button):
+            def __init__(self, master=None, **kwargs):
+                super().__init__(master, **kwargs)
+                self.configure(
+                    background="#333333",  # Dark gray background
+                    foreground="#ffffff",  # White text
+                    font=("", 10, "bold"),  # Bold font
+                    borderwidth=1,
+                    relief=tk.RAISED,
+                    padx=10,
+                    pady=5,
+                    activebackground="#555555",  # Slightly lighter when clicked
+                    activeforeground="#ffffff",  # White text when active
+                    disabledforeground="#ffffff"  # White text when disabled
+                )
+
         # Find SKUs Button - moved to the position indicated by the red arrow (between VIN and Part Descriptions)
-        self.find_button = ttk.Button(
+        self.find_button = DarkButton(
             input_frame, text="Find SKUs",
-            command=self.find_skus_handler,
-            style="Accent.TButton")  # Apply the custom style
+            command=self.find_skus_handler)
         self.find_button.grid(row=0, column=2, padx=5, pady=5, sticky="w")
 
         # --- Vehicle Details Frame (Right Column) ---
@@ -433,11 +450,10 @@ class FixacarApp:
         bottom_frame.pack(side=tk.BOTTOM, fill="x",
                           expand=False, pady=(0, 10), padx=10)
 
-        self.save_button = ttk.Button(
+        self.save_button = DarkButton(
             bottom_frame, text="Save Confirmed Selections",
             command=self.save_selections_handler,
-            state=tk.DISABLED,
-            style="Accent.TButton")  # Apply the same custom style for consistency
+            state=tk.DISABLED)
         # Pack inside the bottom_frame with some padding
         self.save_button.pack(pady=5)
 
