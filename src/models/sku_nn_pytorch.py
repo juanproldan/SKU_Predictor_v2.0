@@ -86,68 +86,9 @@ class OptimizedSKUNNModel(nn.Module):
         return logits
 
 
-class SKUNNModel(nn.Module):
-    """
-    PyTorch model for SKU prediction based on categorical features and text description.
-    This model is designed to replace the Keras model in the original implementation.
-    """
-
-    def __init__(self, cat_input_size, vocab_size, embedding_dim, hidden_size, num_classes):
-        """
-        Initialize the model.
-
-        Args:
-            cat_input_size: Size of the categorical input features
-            vocab_size: Size of the vocabulary for the embedding layer
-            embedding_dim: Dimension of the embedding layer
-            hidden_size: Size of the LSTM hidden layer
-            num_classes: Number of output classes (SKUs)
-        """
-        super(SKUNNModel, self).__init__()
-
-        # Embedding layer for text input
-        self.embedding = nn.Embedding(vocab_size, embedding_dim)
-
-        # LSTM layer for text processing
-        self.lstm = nn.LSTM(embedding_dim, hidden_size,
-                            batch_first=True, dropout=0.2)
-
-        # Dense layers for classification
-        self.fc1 = nn.Linear(hidden_size + cat_input_size, 128)
-        self.dropout = nn.Dropout(0.5)
-        self.fc2 = nn.Linear(128, num_classes)
-
-    def forward(self, cat_input, text_input):
-        """
-        Forward pass of the model.
-
-        Args:
-            cat_input: Categorical input features [batch_size, cat_input_size]
-            text_input: Text input (token IDs) [batch_size, max_sequence_length]
-
-        Returns:
-            Output logits [batch_size, num_classes]
-        """
-        # Process text input through embedding and LSTM
-        embedded = self.embedding(text_input)
-        lstm_out, _ = self.lstm(embedded)
-        # Take the output from the last time step
-        lstm_out = lstm_out[:, -1, :]
-
-        # Concatenate LSTM output with categorical features
-        combined = torch.cat((cat_input, lstm_out), dim=1)
-
-        # Pass through dense layers
-        x = F.relu(self.fc1(combined))
-        x = self.dropout(x)
-        logits = self.fc2(x)
-
-        return logits
-
-
 def load_model(model_dir):
     """
-    Load the PyTorch SKU NN model and its associated encoders.
+    Load the optimized PyTorch SKU NN model and its associated encoders.
 
     Args:
         model_dir: Directory where the model and encoders are stored
@@ -156,7 +97,6 @@ def load_model(model_dir):
         model: Loaded PyTorch model
         encoders: Dictionary of loaded encoders
     """
-    # Load encoders
     encoders = {}
     try:
         encoders['Make'] = joblib.load(
@@ -219,23 +159,11 @@ def load_model(model_dir):
         print(f"Error loading encoders: {e}")
         return None, None
 
-    # Try to load optimized model first, then fall back to standard model
-    optimized_model_path = os.path.join(
-        model_dir, 'sku_nn_model_pytorch_optimized.pth')
-    standard_model_path = os.path.join(model_dir, 'sku_nn_model_pytorch.pth')
+    # Load optimized model
+    model_path = os.path.join(model_dir, 'sku_nn_model_pytorch_optimized.pth')
 
-    # Determine which model file to use
-    if os.path.exists(optimized_model_path):
-        model_path = optimized_model_path
-        use_optimized_model = True
-        print("Using optimized model architecture")
-    elif os.path.exists(standard_model_path):
-        model_path = standard_model_path
-        use_optimized_model = False
-        print("Using standard model architecture")
-    else:
-        print(
-            f"No model file found at {optimized_model_path} or {standard_model_path}")
+    if not os.path.exists(model_path):
+        print(f"No optimized model file found at {model_path}")
         return None, encoders
 
     try:
@@ -244,56 +172,22 @@ def load_model(model_dir):
         vocab_size = len(encoders['tokenizer'].word_index) + 1
         num_classes = len(encoders['sku'].classes_)
 
-        # Create model instance based on which model file we're using
-        if use_optimized_model:
-            model = OptimizedSKUNNModel(
-                cat_input_size=cat_input_size,
-                vocab_size=vocab_size,
-                embedding_dim=OPTIMIZED_EMBEDDING_DIM,
-                hidden_size=OPTIMIZED_HIDDEN_DIM,
-                num_classes=num_classes
-            )
-        else:
-            model = SKUNNModel(
-                cat_input_size=cat_input_size,
-                vocab_size=vocab_size,
-                embedding_dim=EMBEDDING_DIM,
-                hidden_size=128,
-                num_classes=num_classes
-            )
+        # Create model instance
+        model = OptimizedSKUNNModel(
+            cat_input_size=cat_input_size,
+            vocab_size=vocab_size,
+            embedding_dim=OPTIMIZED_EMBEDDING_DIM,
+            hidden_size=OPTIMIZED_HIDDEN_DIM,
+            num_classes=num_classes
+        )
 
-        # Load state dict with special handling for embedding layer size mismatch
-        try:
-            model.load_state_dict(torch.load(model_path))
-        except RuntimeError as e:
-            if "embedding.weight" in str(e) and "size mismatch" in str(e):
-                print("Handling embedding size mismatch...")
-                # Load the state dict
-                state_dict = torch.load(model_path)
-
-                # Get the embedding weights from the state dict
-                old_embedding = state_dict['embedding.weight']
-                old_vocab_size, embedding_dim = old_embedding.shape
-
-                # Initialize the model's embedding with the correct size
-                model.embedding = nn.Embedding(old_vocab_size, embedding_dim)
-
-                # Update the state dict with the resized embedding
-                state_dict['embedding.weight'] = old_embedding
-
-                # Load the modified state dict
-                model.load_state_dict(state_dict)
-                print(
-                    f"Successfully adjusted embedding layer to size: {old_vocab_size}x{embedding_dim}")
-            else:
-                # If it's not an embedding size issue, re-raise the exception
-                raise
-
+        # Load state dict
+        model.load_state_dict(torch.load(model_path))
         model.eval()  # Set to evaluation mode
 
         return model, encoders
     except Exception as e:
-        print(f"Error loading PyTorch model: {e}")
+        print(f"Error loading optimized PyTorch model: {e}")
         return None, encoders
 
 
@@ -352,8 +246,7 @@ def predict_sku(model, encoders, make, model_year, series, description, device='
         sequences = tokenizer.texts_to_sequences([normalized_desc])
 
         # Determine which sequence length to use based on model type
-        seq_length = OPTIMIZED_MAX_SEQUENCE_LENGTH if isinstance(
-            model, OptimizedSKUNNModel) else MAX_SEQUENCE_LENGTH
+        seq_length = OPTIMIZED_MAX_SEQUENCE_LENGTH
 
         # Manual padding (since we're not using Keras pad_sequences)
         padded_seq = [0] * seq_length

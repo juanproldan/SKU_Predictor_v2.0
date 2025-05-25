@@ -22,7 +22,6 @@ LEARNING_RATE = 0.001
 class SKUNNModel(nn.Module):
     """
     PyTorch model for SKU prediction based on categorical features and text description.
-    This model is designed to replace the Keras model in the original implementation.
     """
 
     def __init__(self, cat_input_size, vocab_size, embedding_dim, hidden_size, num_classes):

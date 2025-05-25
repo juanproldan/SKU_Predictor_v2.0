@@ -142,82 +142,6 @@ def prepare_data(df):
     return train_loader, val_loader, tokenizer, sku_encoder
 
 
-def train_model(train_loader, val_loader, output_dim):
-    """Train the PyTorch model."""
-    # Initialize the model
-    model = SKUNNModel(
-        vocab_size=VOCAB_SIZE,
-        embedding_dim=EMBEDDING_DIM,
-        hidden_dim=HIDDEN_DIM,
-        output_dim=output_dim,
-        n_layers=1,
-        dropout=0.2
-    )
-
-    # Define loss function and optimizer
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters())
-
-    # Training loop
-    best_val_loss = float('inf')
-
-    for epoch in range(EPOCHS):
-        # Training phase
-        model.train()
-        train_loss = 0
-
-        for batch in train_loader:
-            inputs, targets = batch
-
-            # Zero the gradients
-            optimizer.zero_grad()
-
-            # Forward pass
-            outputs = model(inputs)
-
-            # Calculate loss
-            loss = criterion(outputs, targets)
-
-            # Backward pass
-            loss.backward()
-
-            # Update parameters
-            optimizer.step()
-
-            train_loss += loss.item()
-
-        train_loss /= len(train_loader)
-
-        # Validation phase
-        model.eval()
-        val_loss = 0
-
-        with torch.no_grad():
-            for batch in val_loader:
-                inputs, targets = batch
-
-                # Forward pass
-                outputs = model(inputs)
-
-                # Calculate loss
-                loss = criterion(outputs, targets)
-
-                val_loss += loss.item()
-
-        val_loss /= len(val_loader)
-
-        print(
-            f"Epoch {epoch+1}/{EPOCHS} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
-
-        # Save the best model
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            torch.save(model.state_dict(), os.path.join(
-                MODEL_DIR, "sku_nn_model_pytorch.pt"))
-
-    return model
-
-
 def save_model_artifacts(tokenizer, sku_encoder):
     """Save the model artifacts."""
     # Create the model directory if it doesn't exist
@@ -241,10 +165,6 @@ def main():
 
     # Prepare data
     train_loader, val_loader, tokenizer, sku_encoder = prepare_data(df)
-
-    # Train the model
-    output_dim = len(sku_encoder.categories_[0])
-    model = train_model(train_loader, val_loader, output_dim)
 
     # Save model artifacts
     save_model_artifacts(tokenizer, sku_encoder)

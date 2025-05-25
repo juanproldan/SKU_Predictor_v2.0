@@ -2,11 +2,11 @@
 
 **Document Title:** Fixacar SKU Finder Application v1.0
 
-**Version:** 1.4 (Updated)
+**Version:** 1.5 (Updated)
 
-**Date:** May 9, 2025
+**Date:** May 14, 2025
 
-**Prepared By:** Gemini (Collaborative with User)
+**Prepared By:** Gemini & Claude (Collaborative with User)
 
 **Target Environment:** Windows Desktop
 
@@ -41,6 +41,10 @@
     * Must be a simple GUI application for Windows.
     * Includes VIN text input, multi-line Part Descriptions text area, and a "Find SKUs" button.
     * Includes a clear output area for vehicle details and SKU suggestions/predictions per description.
+    * Provides a two-column layout with input on the left (60% width) and vehicle details on the right (40% width).
+    * Displays SKU suggestions in the top right corner with complete columns horizontally and vertical scrolling for additional items.
+    * Uses color-coding for confidence levels and contrasting colors for button visibility.
+    * Includes a text button for manual SKU entry positioned next to the 'Manual entry' radio button with auto-selection when typing.
 * **3.2 VIN Decoding & Vehicle Identification:**
     * Validate 17-character VIN on button click.
     * **Use a comprehensive lookup database/table or rule-based logic** to determine and store primary vehicle details (Make, Year, Series) from the VIN. Model and Body Style are not currently determined through this process. These details serve as crucial features for SKU prediction.
@@ -78,7 +82,7 @@
     * Add new entries to the in-memory Maestro structure (with unique ID, normalized description, `Equivalencia_Row_ID`, confirmed SKU, confidence 1.0, source "UserConfirmed", date, etc.). Avoid exact duplicates based on VIN details and Normalized Description/Equivalencia ID.
     * **Save:** Write the entire current in-memory Maestro data structure back to the **`Maestro.xlsx` file**.
     * When a user **declines** a suggested SKU or selects a *different* SKU than predicted, this provides implicit negative feedback. This feedback will be logged (e.g., in a separate 'FeedbackLog.txt' file or a dedicated table within `fixacar_history.db`) containing the VIN details, original description, the SKUs that were suggested, and the SKU(s) that were ultimately chosen or explicitly declined. This logged information is crucial for identifying cases where the model's predictions were incorrect or ambiguous. It will be incorporated during **future offline model retraining cycles (Section 3.9)** by allowing developers to analyze misclassifications, refine model features, adjust training parameters, or update the `Equivalencias.xlsx` file to enhance the accuracy of subsequent model versions.
-* **3.9 Offline Data Processing Script (Separate Concern):**
+* **3.9 Offline Data Processing Scripts (Separate Concerns):**
     * A separate, non-GUI script to be run periodically on Windows.
     * Reads `Consolidado.json` and `Equivalencias.xlsx`.
     * Applies Text Normalization (3.3).
@@ -87,14 +91,34 @@
     * Connects to/creates the `fixacar_history.db` SQLite database.
     * **Loads the processed data (VIN details, Normalized Description, Equivalencia ID, SKU) into a table** (`historical_parts`) in the SQLite database. Handles appending new data.
     * **Crucially:** This script is also responsible for preparing the dataset from `fixacar_history.db` and performing the **training of the SKU Prediction Model (Machine Learning Model)**. This involves feature engineering from VIN details and description (e.g., using `Equivalencia_Row_ID` or generating text embeddings), selecting and training a suitable model (e.g., a Neural Network, XGBoost, or Random Forest), and evaluating its performance. The trained model parameters/files are the output of this process, ready to be loaded by the main application.
+* **3.10 Data Update Utilities:**
+    * **Get_New_Data_From_Json.py:** A utility script that:
+        * Compares two JSON files (original and new) to identify and extract only new records
+        * Saves the extracted new data to a new JSON file
+        * Creates a SQLite database from the new data, following the same structure as the existing database
+        * Preserves date information from the original records
+        * Includes text normalization for descriptions
+    * **Process_New_Data.py:** A utility script that:
+        * Reads from the New_Data.db database file
+        * Creates a new SQLite database with additional prediction columns:
+            * PCS_Make: Predicted car make using the VIN predictor model
+            * PCS_Year: Predicted car year using the VIN predictor model
+            * PCS_Series: Predicted car series using the VIN predictor model
+            * PCS_SKU: Predicted SKU using the SKU predictor model
+        * Uses the existing prediction models to populate these columns
+        * Maintains all existing data and relationships
 
 ## 4. Data Requirements
 
 * **4.1 Source and Data Files:**
     * `Consolidado.json`: (Large JSON file) Source for offline processing script. Not read directly by the main application.
+    * `New_Consolidado.json`: (Large JSON file) Source for the Get_New_Data_From_Json.py script to extract new records.
+    * `New_Data.json`: (JSON file) Output from the Get_New_Data_From_Json.py script containing only new records.
     * `Equivalencias.xlsx`: (Excel file) Read by main application and offline script. Location configurable.
     * `Maestro.xlsx`: (Excel file) Read and Written by main application. Location configurable.
     * `fixacar_history.db`: (SQLite database file) Populated by offline script, used by script for model training data. *Not* directly queried by the main application for core suggestions in v1.1, but serves as the source for the prediction model's training data. Location configurable.
+    * `New_Data.db`: (SQLite database file) Created by the Get_New_Data_From_Json.py script, containing only new records from the latest data update.
+    * `Processed_Data.db`: (SQLite database file) Created by the Process_New_Data.py script, containing the new data with additional prediction columns.
     * **Prediction Model File(s):** (e.g., `.h5`, `.pkl`, `.json`, custom format) File(s) containing the trained Machine Learning model parameters and/or structure. Created by the offline script, read by the main application. Location configurable.
 * **4.2 In-Memory Data Structures (Used by Main Application):**
     * In-memory Maestro Data: Fields mirror `Maestro.xlsx` columns, including `Maestro_ID`, VIN details, `Original_Description_Input`, `Normalized_Description_Input`, `Equivalencia_Row_ID`, `Confirmed_SKU`, `Confidence` (1.0), `Source` ("UserConfirmed"), `Date_Added`.
@@ -119,6 +143,16 @@
         * `sku` (TEXT)
         * `Equivalencia_Row_ID` (INTEGER, can be NULL)
         * `source_bid_id` (TEXT/INTEGER, Optional link to original bid)
+        * `date` (TEXT, timestamp of the record)
+    * `New_Data.db` Schema:
+        * Contains the same tables and schema as `fixacar_history.db`
+        * Only includes new records from the latest data update
+    * `Processed_Data.db` Schema:
+        * Contains the same tables and schema as `New_Data.db` with additional prediction columns:
+        * `PCS_Make` (TEXT, predicted car make)
+        * `PCS_Year` (TEXT, predicted car year)
+        * `PCS_Series` (TEXT, predicted car series)
+        * `PCS_SKU` (TEXT, predicted SKU)
     * **Prediction Model File(s):** Specific schema depends on the chosen ML framework/format (e.g., Keras/TensorFlow for Neural Networks, Scikit-learn for Tree-based models). Must contain the trained model weights and configuration necessary for making predictions based on VIN details and description features.
 * **4.4 File Locations:** Configurable file paths for `Equivalencias.xlsx`, `Maestro.xlsx`, `fixacar_history.db`, and the Prediction Model file(s).
 
@@ -129,6 +163,8 @@
     * **SKU Prediction inference time** should be fast (milliseconds) once the model is loaded, as it involves a single inference pass through the trained machine learning model.
     * **Maestro lookup time** will be very fast as it's an in-memory structure.
     * The **Offline Data Processing and Model Training Script's runtime** will depend heavily on the size of `Consolidado.json` and the complexity/size of the chosen machine learning model. Training can be a time-consuming process but does **not** impact the live application's prediction speed.
+    * The **Get_New_Data_From_Json.py** script's runtime will depend on the size of the JSON files being compared. For large files, this process may take several minutes.
+    * The **Process_New_Data.py** script's runtime will depend on the number of records in the New_Data.db file and the complexity of the prediction models. This process may take several minutes for large datasets.
     * Memory usage for the main application will include the Maestro and Equivalencias data, plus the memory required to load the **Prediction Model**. Model size can vary, but should be manageable for a desktop environment.
 * **5.2 Usability:** Interface must be simple and intuitive for non-technical users on Windows.
 * **5.3 Reliability:** Handle file access errors (`.xlsx`, `.db`, model files), JSON parsing errors (in script), data validation. Ensure Maestro updates are saved persistently. Handle potential prediction model errors gracefully (e.g., suggest "not found" if confidence is too low or an error occurs).

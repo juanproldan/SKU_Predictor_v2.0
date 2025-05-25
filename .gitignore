@@ -161,3 +161,10 @@ venv_tf/
 # Other potentially large files or sensitive info
 # credentials.json
 # api_keys.txt
+
+# Playwright
+node_modules/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/

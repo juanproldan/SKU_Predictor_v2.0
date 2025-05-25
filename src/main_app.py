@@ -30,6 +30,8 @@ except ImportError:
     from .utils.dummy_tokenizer import DummyTokenizer
     from .train_vin_predictor import extract_vin_features, decode_year
 
+import sys
+
 # --- Determine Project Root Path ---
 # Get the directory of the current script (src)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -37,14 +39,21 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 
 
-# --- Configuration (using absolute paths) ---
-# Assuming Equivalencias.xlsx is at the project root
-DEFAULT_EQUIVALENCIAS_PATH = os.path.join(
-    PROJECT_ROOT, "Source_Files", "Equivalencias.xlsx")
-DEFAULT_MAESTRO_PATH = os.path.join(PROJECT_ROOT, "data", "Maestro.xlsx")
-DEFAULT_DB_PATH = os.path.join(PROJECT_ROOT, "data", "fixacar_history.db")
-# Directory where models are saved
-MODEL_DIR = os.path.join(PROJECT_ROOT, "models")
+def get_resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller"""
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+
+
+# --- Configuration (using resource path) ---
+DEFAULT_EQUIVALENCIAS_PATH = get_resource_path(os.path.join(
+    "Source_Files", "Equivalencias.xlsx"))
+DEFAULT_MAESTRO_PATH = get_resource_path(os.path.join("data", "Maestro.xlsx"))
+DEFAULT_DB_PATH = get_resource_path(os.path.join("data", "fixacar_history.db"))
+MODEL_DIR = get_resource_path("models")
+SKU_NN_MODEL_DIR = os.path.join(MODEL_DIR, "sku_nn")
+
 # Define pattern and count for loading VIN details from chunks (Used by load_vin_details_from_chunks)
 # This path might also need adjustment if it's not relative to CWD
 # Keeping this relative for now, assuming it's handled elsewhere or CWD is intended for these specific chunks
@@ -148,11 +157,10 @@ class FixacarApp:
         global sku_nn_model, sku_nn_encoder_make, sku_nn_encoder_model_year, sku_nn_encoder_series, sku_nn_tokenizer_desc, sku_nn_encoder_sku
         print("Loading SKU NN model and preprocessors...")
         try:
-            # Load PyTorch model and encoders
+            # Only load the optimized PyTorch model and encoders
             sku_nn_model_path = os.path.join(
-                SKU_NN_MODEL_DIR, 'sku_nn_model_pytorch.pth')
+                SKU_NN_MODEL_DIR, 'sku_nn_model_pytorch_optimized.pth')
 
-            # First load the encoders separately to ensure they're available even if model loading fails
             sku_nn_encoder_make = joblib.load(os.path.join(
                 SKU_NN_MODEL_DIR, 'encoder_Make.joblib'))
             print("  SKU NN Make encoder loaded.")
@@ -168,14 +176,12 @@ class FixacarApp:
                 print("  SKU NN Description tokenizer loaded.")
             except Exception as e:
                 print(f"  Error loading tokenizer: {e}")
-                # Try to use our PyTorch tokenizer first
                 try:
                     from utils.pytorch_tokenizer import PyTorchTokenizer
                     sku_nn_tokenizer_desc = PyTorchTokenizer(
                         num_words=10000, oov_token="<OOV>")
                     print("  Using PyTorchTokenizer instead.")
                 except ImportError:
-                    # Fall back to DummyTokenizer
                     from utils.dummy_tokenizer import DummyTokenizer
                     sku_nn_tokenizer_desc = DummyTokenizer(
                         num_words=10000, oov_token="<OOV>")
@@ -185,18 +191,18 @@ class FixacarApp:
                 SKU_NN_MODEL_DIR, 'encoder_sku.joblib'))
             print("  SKU NN SKU encoder loaded.")
 
-            # Now try to load the PyTorch model
+            # Now try to load the optimized PyTorch model
             if os.path.exists(sku_nn_model_path):
-                # Use our custom load_model function from sku_nn_pytorch.py
                 sku_nn_model, _ = load_model(SKU_NN_MODEL_DIR)
                 if sku_nn_model:
-                    print("  SKU NN PyTorch model loaded successfully.")
+                    print("  SKU NN Optimized PyTorch model loaded successfully.")
                 else:
-                    print("  Failed to load SKU NN PyTorch model.")
+                    print("  Failed to load SKU NN Optimized PyTorch model.")
             else:
                 print(
-                    f"  SKU NN PyTorch model file not found at {sku_nn_model_path}")
-                print("  Note: You need to train and save a PyTorch model first.")
+                    f"  SKU NN Optimized PyTorch model file not found at {sku_nn_model_path}")
+                print(
+                    "  Note: You need to train and save an optimized PyTorch model first.")
                 sku_nn_model = None
 
         except FileNotFoundError as e:
@@ -473,6 +479,15 @@ class FixacarApp:
 
         # Removed manual input variables
 
+    def _correct_vin(self, vin: str) -> str:
+        """
+        Corrects common VIN input mistakes:
+        - Replaces I/i with 1
+        - Replaces O/o/Q/q with 0
+        Returns the corrected VIN string.
+        """
+        return vin.upper().replace('I', '1').replace('O', '0').replace('Q', '0')
+
     def _get_sku_nn_prediction(self, make: str, model_year: str, series: str, description: str) -> str | None:
         """
         Uses the loaded SKU NN model to predict an SKU.
@@ -533,6 +548,13 @@ class FixacarApp:
         """
         print("\n--- 'Find SKUs' button clicked ---")
         vin = self.vin_entry.get().strip().upper()
+        # VIN correction step
+        corrected_vin = self._correct_vin(vin)
+        if vin != corrected_vin:
+            print(f"VIN corrected from {vin} to {corrected_vin}")
+            self.vin_entry.delete(0, 'end')
+            self.vin_entry.insert(0, corrected_vin)
+        vin = corrected_vin
 
         # Clear previous results
         self._clear_results_area()
@@ -1047,85 +1069,49 @@ class FixacarApp:
             self.current_num_columns = 0
 
             # Create frames for each part description
-            for part_info in enumerate(self.processed_parts):
-                # Use index 1 to get the actual part_info dict
-                original_desc = part_info[1]["original"]
+            for part_info in self.processed_parts:
+                original_desc = part_info["original"]
                 # Get suggestions and filter out any empty SKUs that might have slipped through
                 suggestions_list = [(sku, info) for sku, info in self.current_suggestions.get(original_desc, [])
-                                    if sku and sku.strip()]
+                                    if sku and sku.strip()][:5]
 
-                # Create part_frame but do not grid it yet. It will be gridded by _resize_results_columns
                 part_frame = ttk.LabelFrame(
                     self.results_grid_container, text=f"{original_desc}", padding=5)
                 self.part_frames_widgets.append(part_frame)
-
-                # Configure internal column of part_frame
                 part_frame.columnconfigure(0, weight=1)
-
-                # Set a minimum width for consistent sizing
                 part_frame.config(width=200)
 
                 if suggestions_list:
                     self.selection_vars[original_desc] = tk.StringVar(
                         value=None)
-
-                    # Create a StringVar to store the manual SKU entry
                     self.manual_sku_vars = getattr(self, 'manual_sku_vars', {})
                     self.manual_sku_vars[original_desc] = tk.StringVar()
 
-                    # Add a separator before the radio buttons
                     ttk.Separator(part_frame, orient='horizontal').pack(
                         fill='x', pady=5)
 
-                    # Add radio buttons for each suggestion with color-coding based on confidence
+                    # Add radio buttons for each suggestion
                     for sku, info in suggestions_list:
-                        confidence = info['confidence']
-                        source_text = info['source']
-                        radio_text = f"SKU: {sku} (Conf: {confidence:.3f}, Src: {source_text})"
-
-                        # Create a frame to hold the radio button and confidence indicator
-                        suggestion_frame = ttk.Frame(part_frame)
-                        suggestion_frame.pack(
-                            anchor="w", padx=5, pady=2, fill="x")
-
-                        # Add color indicator based on confidence
-                        color_indicator = tk.Canvas(
-                            suggestion_frame, width=15, height=15, highlightthickness=0)
-
-                        # Color coding: green for high confidence, yellow for medium, red for low
-                        if confidence >= 0.7:
-                            color = "#4CAF50"  # Green
-                        elif confidence >= 0.4:
-                            color = "#FFC107"  # Yellow/Amber
-                        else:
-                            color = "#F44336"  # Red
-
-                        color_indicator.create_oval(
-                            2, 2, 13, 13, fill=color, outline=color)
-                        color_indicator.pack(side=tk.LEFT, padx=(0, 5))
-
-                        # Add the radio button
+                        conf = info.get('confidence', 0)
+                        source = info.get('source', '')
                         rb = ttk.Radiobutton(
-                            suggestion_frame,
-                            text=radio_text,
+                            part_frame,
+                            text=f"{sku} (Conf: {conf:.2f}, {source})",
                             variable=self.selection_vars[original_desc],
                             value=sku
                         )
-                        rb.pack(side=tk.LEFT, fill="x", expand=True)
+                        rb.pack(anchor="w", padx=5, pady=2)
 
-                    # Add "Manual entry" radio button with text field at the bottom
+                    # Manual entry option
                     rb_none_frame = ttk.Frame(part_frame)
                     rb_none_frame.pack(anchor="w", padx=5, pady=2, fill="x")
-
                     rb_none = ttk.Radiobutton(
                         rb_none_frame,
-                        text="Manual entry",
+                        text="Manual Entry:",
                         variable=self.selection_vars[original_desc],
-                        value=""
+                        value="MANUAL"
                     )
                     rb_none.pack(side=tk.LEFT, padx=(0, 5))
-
-                    # Add the manual entry field next to the radio button
                     manual_entry = ttk.Entry(
                         rb_none_frame,
                         textvariable=self.manual_sku_vars[original_desc],
@@ -1133,20 +1119,15 @@ class FixacarApp:
                     )
                     manual_entry.pack(side=tk.LEFT, padx=5)
 
-                    # Add trace to auto-select the radio button when typing
                     def _on_manual_entry_change(*_, desc=original_desc):
-                        # The _ parameter captures all arguments but we don't use them
-                        # They are required by trace_add
                         if self.manual_sku_vars[desc].get().strip():
-                            self.selection_vars[desc].set("")
-
+                            self.selection_vars[desc].set("MANUAL")
                     self.manual_sku_vars[original_desc].trace_add(
                         "write", _on_manual_entry_change)
 
-                    # Add "I don't know the SKU" radio button
+                    # 'I don't know' option
                     rb_unknown_frame = ttk.Frame(part_frame)
                     rb_unknown_frame.pack(anchor="w", padx=5, pady=2, fill="x")
-
                     rb_unknown = ttk.Radiobutton(
                         rb_unknown_frame,
                         text="I don't know the SKU",
@@ -1155,35 +1136,20 @@ class FixacarApp:
                     )
                     rb_unknown.pack(side=tk.LEFT, fill="x", expand=True)
                 else:
-                    # Display a label indicating no suggestions were found
-                    ttk.Label(part_frame, text="  (No suggestions found)").pack(
-                        anchor="w", padx=15, pady=5)
-
-                    # Still create selection_vars and manual_sku_vars for this part
+                    # No suggestions, only manual and unknown options
                     self.selection_vars[original_desc] = tk.StringVar(
                         value=None)
-
-                    # Create a StringVar to store the manual SKU entry
                     self.manual_sku_vars = getattr(self, 'manual_sku_vars', {})
                     self.manual_sku_vars[original_desc] = tk.StringVar()
-
-                    # Add a separator
-                    ttk.Separator(part_frame, orient='horizontal').pack(
-                        fill='x', pady=5)
-
-                    # Add "Manual entry" radio button with text field
                     rb_none_frame = ttk.Frame(part_frame)
                     rb_none_frame.pack(anchor="w", padx=5, pady=2, fill="x")
-
                     rb_none = ttk.Radiobutton(
                         rb_none_frame,
-                        text="Manual entry",
+                        text="Manual Entry:",
                         variable=self.selection_vars[original_desc],
-                        value=""
+                        value="MANUAL"
                     )
                     rb_none.pack(side=tk.LEFT, padx=(0, 5))
-
-                    # Add the manual entry field next to the radio button
                     manual_entry = ttk.Entry(
                         rb_none_frame,
                         textvariable=self.manual_sku_vars[original_desc],
@@ -1191,20 +1157,13 @@ class FixacarApp:
                     )
                     manual_entry.pack(side=tk.LEFT, padx=5)
 
-                    # Add trace to auto-select the radio button when typing
                     def _on_manual_entry_change(*_, desc=original_desc):
-                        # The _ parameter captures all arguments but we don't use them
-                        # They are required by trace_add
                         if self.manual_sku_vars[desc].get().strip():
-                            self.selection_vars[desc].set("")
-
+                            self.selection_vars[desc].set("MANUAL")
                     self.manual_sku_vars[original_desc].trace_add(
                         "write", _on_manual_entry_change)
-
-                    # Add "I don't know the SKU" radio button
                     rb_unknown_frame = ttk.Frame(part_frame)
                     rb_unknown_frame.pack(anchor="w", padx=5, pady=2, fill="x")
-
                     rb_unknown = ttk.Radiobutton(
                         rb_unknown_frame,
                         text="I don't know the SKU",
@@ -1217,14 +1176,9 @@ class FixacarApp:
             print("Initializing responsive layout...")
             self.root.update_idletasks()  # Force geometry update before calculating layout
             self._resize_results_columns()  # Perform initial layout
-
-            # Bind to both the container and root window resize events
             self.results_grid_container.bind(
                 "<Configure>", self._on_results_configure)
             self.root.bind("<Configure>", self._on_results_configure)
-
-            # Enable save button if there are any processed parts with selection options
-            # (either suggestions or manual entry options)
             if self.processed_parts:
                 self.save_button.config(state=tk.NORMAL)
             else:

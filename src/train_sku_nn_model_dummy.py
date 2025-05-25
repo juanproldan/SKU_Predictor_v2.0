@@ -1,4 +1,3 @@
-from models.sku_nn_pytorch import SKUNNModel
 import os
 import sys
 import joblib
@@ -75,59 +74,6 @@ def generate_dummy_data(encoders, num_samples=1000):
     return X_cat_train, X_cat_val, X_text_train, X_text_val, y_train, y_val, vocab_size, num_classes
 
 
-def train_pytorch_model(X_cat_train, X_text_train, y_train, X_cat_val, X_text_val, y_val, vocab_size, num_classes):
-    """Train a PyTorch model using the provided data."""
-    # Create PyTorch datasets
-    train_cat_tensor = torch.tensor(X_cat_train, dtype=torch.float32)
-    train_text_tensor = torch.tensor(X_text_train, dtype=torch.long)
-    train_y_tensor = torch.tensor(y_train, dtype=torch.long)
-
-    val_cat_tensor = torch.tensor(X_cat_val, dtype=torch.float32)
-    val_text_tensor = torch.tensor(X_text_val, dtype=torch.long)
-    val_y_tensor = torch.tensor(y_val, dtype=torch.long)
-
-    # Create model
-    model = SKUNNModel(
-        cat_input_size=X_cat_train.shape[1],
-        vocab_size=vocab_size,
-        embedding_dim=EMBEDDING_DIM,
-        hidden_size=HIDDEN_SIZE,
-        num_classes=num_classes
-    )
-
-    # Define loss function and optimizer
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-
-    # Training loop
-    print("Training PyTorch model...")
-    for epoch in range(EPOCHS):
-        model.train()
-        optimizer.zero_grad()
-
-        # Forward pass
-        outputs = model(train_cat_tensor, train_text_tensor)
-        loss = criterion(outputs, train_y_tensor)
-
-        # Backward pass and optimize
-        loss.backward()
-        optimizer.step()
-
-        # Validation
-        model.eval()
-        with torch.no_grad():
-            val_outputs = model(val_cat_tensor, val_text_tensor)
-            val_loss = criterion(val_outputs, val_y_tensor)
-            _, predicted = torch.max(val_outputs, 1)
-            val_accuracy = (predicted == val_y_tensor).sum(
-            ).item() / val_y_tensor.size(0)
-
-        print(
-            f"Epoch {epoch+1}/{EPOCHS}, Loss: {loss.item():.4f}, Val Loss: {val_loss.item():.4f}, Val Acc: {val_accuracy:.4f}")
-
-    return model
-
-
 def main():
     """Main function to train a PyTorch model with dummy data."""
     print("Starting PyTorch model training with dummy data...")
@@ -143,14 +89,8 @@ def main():
     X_cat_train, X_cat_val, X_text_train, X_text_val, y_train, y_val, vocab_size, num_classes = generate_dummy_data(
         encoders)
 
-    # Train PyTorch model
-    model = train_pytorch_model(X_cat_train, X_text_train, y_train,
-                                X_cat_val, X_text_val, y_val, vocab_size, num_classes)
-
-    # Save PyTorch model
-    print(f"Saving PyTorch model to {PYTORCH_MODEL_PATH}...")
-    torch.save(model.state_dict(), PYTORCH_MODEL_PATH)
-    print("PyTorch model saved successfully.")
+    print("This script is obsolete for the standard model. Please repurpose or delete.")
+    return
 
 
 if __name__ == "__main__":
