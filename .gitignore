@@ -158,6 +158,40 @@ Source_Files/
 # Exclude virtual environments
 venv_tf/
 
+# Exclude large directories and files (models, data, deployment)
+models/
+data/
+Fixacar_Deploy/
+00_Separador de Json por Plataforma/
+
+# Exclude executables and large binary files
+*.exe
+*.msi
+*.dmg
+*.pkg
+
+# Exclude large data files
+*.csv
+*.json
+*.xlsx
+*.xls
+
+# Exclude model and ML files
+*.joblib
+*.pkl
+*.pickle
+*.h5
+*.keras
+*.pth
+*.pt
+*.bin
+*.onnx
+
+# Exclude database files
+*.db
+*.sqlite
+*.sqlite3
+
 # Other potentially large files or sensitive info
 # credentials.json
 # api_keys.txt
