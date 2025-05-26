@@ -94,6 +94,9 @@ class FixacarApp:
         self.root.title("Fixacar SKU Finder v1.0 (with VIN Predictor)")
         self.root.geometry("800x750")  # Increased height
 
+        # Maximize the window on startup to ensure all buttons are visible
+        self.root.state('zoomed')  # Windows equivalent of maximized
+
         # Load initial data and models
         self.load_all_data_and_models()
 
@@ -760,6 +763,65 @@ class FixacarApp:
     # Removed _prompt_for_manual_details
     # Removed _handle_manual_details_continue
 
+    def _is_valid_sku(self, sku: str) -> bool:
+        """
+        Validates if a SKU is acceptable for suggestions.
+        Filters out UNKNOWN, empty, or invalid SKUs.
+        """
+        if not sku or not sku.strip():
+            return False
+
+        # Convert to uppercase for consistent checking
+        sku_upper = sku.strip().upper()
+
+        # Filter out UNKNOWN and similar invalid values
+        invalid_skus = {'UNKNOWN', 'N/A', 'NULL', 'NONE', '', 'TBD', 'PENDING', 'MANUAL'}
+
+        if sku_upper in invalid_skus:
+            print(f"    Filtered out invalid SKU: '{sku}'")
+            return False
+
+        return True
+
+    def _aggregate_sku_suggestions(self, suggestions: dict, new_sku: str, new_confidence: float, new_source: str) -> dict:
+        """
+        Aggregates SKU suggestions, handling duplicates by keeping the highest confidence.
+        Also tracks all sources for transparency.
+        """
+        if not self._is_valid_sku(new_sku):
+            return suggestions
+
+        if new_sku in suggestions:
+            # SKU already exists - aggregate information
+            existing = suggestions[new_sku]
+            existing_conf = existing["confidence"]
+            existing_source = existing["source"]
+
+            if new_confidence > existing_conf:
+                # New confidence is higher - update
+                suggestions[new_sku] = {
+                    "confidence": new_confidence,
+                    "source": new_source,
+                    "all_sources": f"{existing_source}, {new_source}",
+                    "best_confidence": new_confidence
+                }
+                print(f"    Updated {new_sku}: {existing_conf:.3f} -> {new_confidence:.3f} (Sources: {existing_source} + {new_source})")
+            else:
+                # Keep existing confidence but track additional source
+                suggestions[new_sku]["all_sources"] = f"{existing_source}, {new_source}"
+                print(f"    Kept {new_sku}: {existing_conf:.3f} (Added source: {new_source})")
+        else:
+            # New SKU - add it
+            suggestions[new_sku] = {
+                "confidence": new_confidence,
+                "source": new_source,
+                "all_sources": new_source,
+                "best_confidence": new_confidence
+            }
+            print(f"    Added {new_sku}: {new_confidence:.3f} ({new_source})")
+
+        return suggestions
+
     def _process_parts_and_continue_search(self):
         """Processes part descriptions and triggers the search and display."""
         # (Content remains largely the same, uses self.vehicle_details which is now predicted)
@@ -902,8 +964,9 @@ class FixacarApp:
 
                         if desc_match:
                             sku = maestro_entry.get('Confirmed_SKU')
-                            if sku and sku.strip() and sku not in suggestions:
-                                suggestions[sku] = {"confidence": 1.0, "source": "Maestro (Exact)"}
+                            if sku and sku.strip():
+                                suggestions = self._aggregate_sku_suggestions(
+                                    suggestions, sku, 1.0, "Maestro (Exact)")
                                 print(f"    ✅ Found in Maestro (Exact 4-param): {sku} (Conf: 1.0)")
 
                 # Second pass: Fuzzy description matching for same Make, Year, Series
@@ -942,13 +1005,11 @@ class FixacarApp:
                                     entry_desc = str(entry.get('Normalized_Description_Input', '')).lower()
                                     if entry_desc == best_match_desc:
                                         sku = entry.get('Confirmed_SKU')
-                                        if sku and sku.strip() and sku not in suggestions:
+                                        if sku and sku.strip():
                                             # Confidence based on similarity (0.8-0.95 range)
                                             confidence = round(0.7 + 0.25 * similarity, 3)
-                                            suggestions[sku] = {
-                                                "confidence": confidence,
-                                                "source": f"Maestro (Fuzzy: {similarity:.2f})"
-                                            }
+                                            suggestions = self._aggregate_sku_suggestions(
+                                                suggestions, sku, confidence, f"Maestro (Fuzzy: {similarity:.2f})")
                                             print(f"    ✅ Found in Maestro (Fuzzy): {sku} (Sim: {similarity:.2f}, Conf: {confidence})")
                                         break
                     except ImportError:
@@ -969,11 +1030,11 @@ class FixacarApp:
                         results = cursor.fetchall()
                         total_matches = sum(row[1] for row in results)
                         for sku, frequency in results:
-                            if sku and sku.strip() and sku not in suggestions:
+                            if sku and sku.strip():
                                 confidence = round(
                                     0.5 + 0.4 * (frequency / total_matches), 3) if total_matches > 0 else 0.5
-                                suggestions[sku] = {
-                                    "confidence": confidence, "source": f"DB (4-param)"}
+                                suggestions = self._aggregate_sku_suggestions(
+                                    suggestions, sku, confidence, f"DB (4-param)")
                                 print(
                                     f"    Found in DB (4-param): {sku} (Freq: {frequency}, Conf: {confidence})")
                     except Exception as db_err:
@@ -1006,7 +1067,7 @@ class FixacarApp:
                                 sku_descriptions[sku].append((desc, frequency))
 
                             for sku, desc_freq_list in sku_descriptions.items():
-                                if sku and sku.strip() and sku not in suggestions:
+                                if sku and sku.strip():
                                     # Get all descriptions for this SKU
                                     descriptions = [desc for desc, _ in desc_freq_list]
 
@@ -1025,18 +1086,16 @@ class FixacarApp:
                                         freq_boost = 0.2 * (frequency / total_freq) if total_freq > 0 else 0
                                         confidence = round(base_confidence + freq_boost, 3)
 
-                                        suggestions[sku] = {
-                                            "confidence": confidence,
-                                            "source": f"DB (3-param Fuzzy: {similarity:.2f})"
-                                        }
+                                        suggestions = self._aggregate_sku_suggestions(
+                                            suggestions, sku, confidence, f"DB (3-param Fuzzy: {similarity:.2f})")
                                         print(
                                             f"    Found in DB (3-param Fuzzy): {sku} (Sim: {similarity:.2f}, Freq: {frequency}, Conf: {confidence})")
                         except ImportError:
                             # Fallback to exact description matching
                             for sku, desc, frequency in results:
-                                if sku and sku.strip() and sku not in suggestions and desc == normalized_desc:
-                                    suggestions[sku] = {
-                                        "confidence": 0.4, "source": "DB (3-param Exact)"}
+                                if sku and sku.strip() and desc == normalized_desc:
+                                    suggestions = self._aggregate_sku_suggestions(
+                                        suggestions, sku, 0.4, "DB (3-param Exact)")
                                     print(
                                         f"    Found in DB (3-param Exact): {sku} (Freq: {frequency}, Conf: 0.4)")
                     except Exception as db_err:
@@ -1072,18 +1131,11 @@ class FixacarApp:
                     )
                     if sku_nn_output:
                         nn_sku, nn_confidence = sku_nn_output
-                        if nn_sku and nn_sku.strip() and nn_sku not in suggestions:  # Add if new and not empty
-                            suggestions[nn_sku] = {"confidence": float(
-                                nn_confidence), "source": "SKU-NN"}
+                        if nn_sku and nn_sku.strip():  # Add if not empty
+                            suggestions = self._aggregate_sku_suggestions(
+                                suggestions, nn_sku, float(nn_confidence), "SKU-NN")
                             print(
                                 f"    Found via SKU-NN: {nn_sku} (Conf: {nn_confidence:.4f})")
-                        elif nn_sku and nn_sku.strip() and nn_sku in suggestions and suggestions[nn_sku]["source"] != "Maestro":
-                            # Optionally update if NN confidence is higher than other non-Maestro sources
-                            if float(nn_confidence) > suggestions[nn_sku]["confidence"]:
-                                suggestions[nn_sku] = {"confidence": float(
-                                    nn_confidence), "source": "SKU-NN (Update)"}
-                                print(
-                                    f"    Updated via SKU-NN: {nn_sku} (New Conf: {nn_confidence:.4f})")
                 else:
                     print(
                         "  Skipping SKU NN prediction due to missing Make, Year, or Series from VIN prediction.")
@@ -1187,9 +1239,14 @@ class FixacarApp:
                     for sku, info in suggestions_list:
                         conf = info.get('confidence', 0)
                         source = info.get('source', '')
+                        all_sources = info.get('all_sources', source)
+
+                        # Show all sources if multiple, otherwise just the main source
+                        display_source = all_sources if all_sources != source else source
+
                         rb = ttk.Radiobutton(
                             part_frame,
-                            text=f"{sku} (Conf: {conf:.2f}, {source})",
+                            text=f"{sku} (Conf: {conf:.2f}, {display_source})",
                             variable=self.selection_vars[original_desc],
                             value=sku
                         )
@@ -1401,16 +1458,42 @@ class FixacarApp:
                 if selected_sku:
                     # Check if this is a manually entered SKU or unknown
                     if selected_sku == "UNKNOWN":
-                        source = "UserUnknown"
+                        print(f"Skipping UNKNOWN SKU for '{original_desc}' - not saving to Maestro")
+                        continue  # Skip UNKNOWN entries - don't save them to Maestro
+                    elif selected_sku == "MANUAL":
+                        # Get the actual SKU from the manual entry field
+                        manual_sku_var = self.manual_sku_vars.get(original_desc)
+                        if manual_sku_var:
+                            actual_manual_sku = manual_sku_var.get().strip()
+                            if actual_manual_sku:
+                                # Validate the manually entered SKU
+                                if not self._is_valid_sku(actual_manual_sku):
+                                    print(f"Skipping invalid manual SKU '{actual_manual_sku}' for '{original_desc}' - not saving to Maestro")
+                                    continue
+                                selected_sku = actual_manual_sku  # Use the actual SKU, not "MANUAL"
+                                source = "UserManualEntry"
+                                print(f"Manual SKU entered for '{original_desc}': {selected_sku}")
+                            else:
+                                print(f"Warning: Manual entry selected but no SKU provided for '{original_desc}'")
+                                continue  # Skip this entry if no manual SKU provided
+                        else:
+                            print(f"Warning: Manual entry selected but no manual_sku_var found for '{original_desc}'")
+                            continue  # Skip this entry
                     else:
+                        # This is a suggested SKU that was selected
+                        # Validate the selected SKU before saving
+                        if not self._is_valid_sku(selected_sku):
+                            print(f"Skipping invalid suggested SKU '{selected_sku}' for '{original_desc}' - not saving to Maestro")
+                            continue
+
                         is_manual = True
                         for sku, _ in self.current_suggestions.get(original_desc, []):
                             if sku == selected_sku:
                                 is_manual = False
                                 break
                         source = "UserManualEntry" if is_manual else "UserConfirmed"
-                    print(
-                        f"Selected for '{original_desc}': SKU = {selected_sku} (Source: {source})")
+
+                    print(f"Selected for '{original_desc}': SKU = {selected_sku} (Source: {source})")
 
                     part_data = next(
                         (p for p in self.processed_parts if p["original"] == original_desc), None)
@@ -1430,7 +1513,7 @@ class FixacarApp:
 
         if not selections_to_save:
             messagebox.showinfo(
-                "Nothing to Save", "No specific SKUs were selected for confirmation.")
+                "Nothing to Save", "No valid SKUs were selected for confirmation.\n\nNote: UNKNOWN selections and invalid SKUs are not saved to preserve data quality.")
             return
 
         added_count = 0
@@ -1533,5 +1616,9 @@ if __name__ == '__main__':
     root = tk.Tk()
     root.title("Fixacar SKU Finder v2.0 (with VIN Predictor)")
     root.geometry("1200x800")  # Set a reasonable default size
+
+    # Maximize the window on startup to ensure all buttons are visible
+    root.state('zoomed')  # Windows equivalent of maximized
+
     app = FixacarApp(root)
     root.mainloop()
