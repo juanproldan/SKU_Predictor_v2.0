@@ -249,10 +249,11 @@ class FixacarApp:
     def load_maestro_data(self, file_path: str, equivalencias_map: dict) -> list:
         # (Content remains the same as before)
         print(f"Loading maestro data from: {file_path}")
+        # Updated column list - removed VIN_Model, VIN_BodyStyle, Equivalencia_Row_ID
         maestro_columns = [
-            'Maestro_ID', 'VIN_Make', 'VIN_Model', 'VIN_Year_Min', 'VIN_Year_Max',
-            'VIN_Series_Trim', 'VIN_BodyStyle', 'Original_Description_Input',
-            'Normalized_Description_Input', 'Equivalencia_Row_ID', 'Confirmed_SKU',
+            'Maestro_ID', 'VIN_Make', 'VIN_Year_Min', 'VIN_Year_Max',
+            'VIN_Series_Trim', 'Original_Description_Input',
+            'Normalized_Description_Input', 'Confirmed_SKU',
             'Confidence', 'Source', 'Date_Added'
         ]
         data_dir = os.path.dirname(file_path)
@@ -280,23 +281,37 @@ class FixacarApp:
             maestro_list = []
             for _, row in df_maestro.iterrows():
                 entry = row.to_dict()
+
+                # Fix bracketed values in text columns
+                for col in ['VIN_Make', 'VIN_Series_Trim']:
+                    if col in entry and pd.notna(entry[col]):
+                        value_str = str(entry[col]).strip()
+                        if value_str.startswith("['") and value_str.endswith("']"):
+                            entry[col] = value_str[2:-2]  # Remove [''] format
+                        elif value_str.startswith('[') and value_str.endswith(']'):
+                            entry[col] = value_str[1:-1].strip("'\"")  # Remove [] format
+
                 original_desc = entry.get('Original_Description_Input', "")
                 if pd.notna(original_desc):
                     normalized_desc = normalize_text(str(original_desc))
                     entry['Normalized_Description_Input'] = normalized_desc
-                    entry['Equivalencia_Row_ID'] = equivalencias_map.get(
-                        normalized_desc)
                 else:
                     entry['Normalized_Description_Input'] = ""
-                    entry['Equivalencia_Row_ID'] = None
-                for col in ['Maestro_ID', 'VIN_Year_Min', 'VIN_Year_Max', 'Equivalencia_Row_ID']:
+
+                # Fix bracketed values in integer columns (removed Equivalencia_Row_ID)
+                for col in ['Maestro_ID', 'VIN_Year_Min', 'VIN_Year_Max']:
                     if col in entry and pd.notna(entry[col]):
+                        original_value = entry[col]  # Store original value
                         try:
-                            entry[col] = int(entry[col])
+                            value_str = str(entry[col]).strip()
+                            if value_str.startswith('[') and value_str.endswith(']'):
+                                value_str = value_str[1:-1].strip("'\"")  # Remove [2012] -> 2012
+                            entry[col] = int(value_str)
                         except (ValueError, TypeError):
-                            entry[col] = None
-                    elif col in entry:
-                        entry[col] = None
+                            # Keep original value if conversion fails, don't set to None
+                            print(f"Warning: Could not convert {col} value '{original_value}' to integer, keeping original value")
+                            entry[col] = original_value
+                    # Don't set to None if column exists but is NaN - keep the original value
                 if 'Confidence' in entry and pd.notna(entry['Confidence']):
                     try:
                         entry['Confidence'] = float(entry['Confidence'])
@@ -619,8 +634,13 @@ class FixacarApp:
                 maker_pred_encoded = model_maker.predict(wmi_encoded)
                 # Check for unknown category in prediction output (shouldn't happen with CategoricalNB if input known)
                 if maker_pred_encoded[0] != -1:
-                    details['Make'] = encoder_y_maker.inverse_transform(
+                    make_result = encoder_y_maker.inverse_transform(
                         maker_pred_encoded.reshape(-1, 1))[0]
+                    # Ensure it's a scalar value, not an array
+                    if hasattr(make_result, 'item'):
+                        details['Make'] = make_result.item()
+                    else:
+                        details['Make'] = make_result
                 else:  # Should not happen if input was known, but handle defensively
                     details['Make'] = "Unknown (Prediction)"
 
@@ -632,8 +652,13 @@ class FixacarApp:
             else:
                 year_pred_encoded = model_year.predict(year_code_encoded)
                 if year_pred_encoded[0] != -1:
-                    details['Model Year'] = encoder_y_year.inverse_transform(
+                    year_result = encoder_y_year.inverse_transform(
                         year_pred_encoded.reshape(-1, 1))[0]
+                    # Ensure it's a scalar value, not an array
+                    if hasattr(year_result, 'item'):
+                        details['Model Year'] = year_result.item()
+                    else:
+                        details['Model Year'] = year_result
                 else:
                     # Fallback to direct map if model fails (unlikely for year)
                     details['Model Year'] = str(decode_year(features['year_code'])) if decode_year(
@@ -649,8 +674,13 @@ class FixacarApp:
                 series_pred_encoded = model_series.predict(
                     series_features_encoded)
                 if series_pred_encoded[0] != -1:
-                    details['Series'] = encoder_y_series.inverse_transform(
+                    series_result = encoder_y_series.inverse_transform(
                         series_pred_encoded.reshape(-1, 1))[0]
+                    # Ensure it's a scalar value, not an array
+                    if hasattr(series_result, 'item'):
+                        details['Series'] = series_result.item()
+                    else:
+                        details['Series'] = series_result
                 else:
                     details['Series'] = "Unknown (Prediction)"
 
@@ -800,22 +830,43 @@ class FixacarApp:
                             f"Warning: Could not convert predicted year '{vin_year_str_scalar}' to integer.")
                         vin_year = None  # Ensure it's None if conversion fails
 
-                # Maestro Search (Adjust matching if needed, e.g., ignore Model if not predicted)
-                if eq_id is not None:
-                    print(f"  Searching Maestro (EqID: {eq_id})...")
-                    for maestro_entry in maestro_data_global:
-                        # Match on Make, Year, EqID (Model might be unreliable from predictor)
-                        match = (maestro_entry.get('Equivalencia_Row_ID') == eq_id and
-                                 maestro_entry.get('VIN_Make') == vin_make and
-                                 # Match on year string
-                                 str(maestro_entry.get('VIN_Year_Min')) == vin_year_str)
-                        if match:
+                # Enhanced Maestro Search with 4-parameter matching
+                print(f"  Searching Maestro data ({len(maestro_data_global)} entries)...")
+
+                # Get predicted series for matching
+                predicted_series_val = self.vehicle_details.get('Series', 'N/A')
+                if isinstance(predicted_series_val, np.ndarray):
+                    vin_series = str(predicted_series_val.item()) if predicted_series_val.size > 0 else 'N/A'
+                else:
+                    vin_series = str(predicted_series_val) if pd.notna(predicted_series_val) else 'N/A'
+
+                for maestro_entry in maestro_data_global:
+                    # Try 4-parameter matching: Make, Year, Series, Description
+                    maestro_make = str(maestro_entry.get('VIN_Make', '')).upper()
+                    maestro_year = str(maestro_entry.get('VIN_Year_Min', ''))
+                    maestro_series = str(maestro_entry.get('VIN_Series_Trim', ''))
+                    maestro_desc = str(maestro_entry.get('Normalized_Description_Input', '')).lower()
+
+                    # Check 4-parameter match
+                    make_match = maestro_make == vin_make
+                    year_match = maestro_year == vin_year_str_scalar
+                    series_match = maestro_series.upper() == vin_series.upper()
+                    desc_match = maestro_desc == normalized_desc.lower()
+
+                    if make_match and year_match and series_match and desc_match:
+                        sku = maestro_entry.get('Confirmed_SKU')
+                        if sku and sku.strip() and sku not in suggestions:
+                            suggestions[sku] = {"confidence": 1.0, "source": "Maestro"}
+                            print(f"    ✅ Found in Maestro (4-param): {sku} (Conf: 1.0)")
+
+                    # Fallback: Try EqID matching if available
+                    elif eq_id is not None:
+                        eq_match = maestro_entry.get('Equivalencia_Row_ID') == eq_id
+                        if eq_match and make_match and year_match:
                             sku = maestro_entry.get('Confirmed_SKU')
                             if sku and sku.strip() and sku not in suggestions:
-                                suggestions[sku] = {
-                                    "confidence": 1.0, "source": "Maestro"}
-                                print(
-                                    f"    Found in Maestro: {sku} (Conf: 1.0)")
+                                suggestions[sku] = {"confidence": 0.9, "source": "Maestro (EqID)"}
+                                print(f"    Found in Maestro (EqID): {sku} (Conf: 0.9)")
 
                 # SQLite Search (ID Match - Adjust matching)
                 if eq_id is not None and vin_year is not None:
@@ -1353,29 +1404,35 @@ class FixacarApp:
         for selection in selections_to_save:
             is_duplicate = False
             for existing_entry in maestro_data_global:
-                # Check for duplicates based on predicted details and selection
+                # Check for duplicates based on 4-parameter approach (no VIN_Model, VIN_BodyStyle, Equivalencia_Row_ID)
                 if (existing_entry.get('VIN_Make') == selection['vin_details'].get('Make') and
-                    existing_entry.get('VIN_Model') == selection['vin_details'].get('Model') and
                     existing_entry.get('VIN_Year_Min') == selection['vin_details'].get('Model Year') and
+                    existing_entry.get('VIN_Series_Trim') == selection['vin_details'].get('Series') and
                     existing_entry.get('Normalized_Description_Input') == selection['normalized_description'] and
                         existing_entry.get('Confirmed_SKU') == selection['confirmed_sku']):
                     is_duplicate = True
                     break
             if not is_duplicate:
+                # Extract and convert year to integer
+                model_year = selection['vin_details'].get('Model Year')
+                if isinstance(model_year, (list, tuple, np.ndarray)):
+                    model_year = model_year[0] if len(model_year) > 0 else None
+                if isinstance(model_year, str):
+                    try:
+                        model_year = int(model_year)
+                    except (ValueError, TypeError):
+                        model_year = None
+
                 new_entry = {
                     'Maestro_ID': next_id,
                     'VIN_Make': selection['vin_details'].get('Make'),
-                    'VIN_Model': selection['vin_details'].get('Model'),
-                    'VIN_Year_Min': selection['vin_details'].get('Model Year'),
-                    'VIN_Year_Max': selection['vin_details'].get('Model Year'),
+                    'VIN_Year_Min': model_year,
+                    'VIN_Year_Max': model_year,
                     'VIN_Series_Trim': selection['vin_details'].get('Series'),
-                    'VIN_BodyStyle': selection['vin_details'].get('Body Class'),
                     'Original_Description_Input': selection['original_description'],
                     'Normalized_Description_Input': selection['normalized_description'],
-                    'Equivalencia_Row_ID': selection['equivalencia_id'],
                     'Confirmed_SKU': selection['confirmed_sku'],
                     'Confidence': 1.0,
-                    # Use the source from selection
                     'Source': selection.get('source', 'UserConfirmed'),
                     'Date_Added': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
@@ -1391,10 +1448,11 @@ class FixacarApp:
             print(
                 f"Attempting to save {added_count} new entries to {DEFAULT_MAESTRO_PATH}...")
             try:
+                # Removed columns: VIN_Model, VIN_BodyStyle, Equivalencia_Row_ID
                 maestro_columns = [
-                    'Maestro_ID', 'VIN_Make', 'VIN_Model', 'VIN_Year_Min', 'VIN_Year_Max',
-                    'VIN_Series_Trim', 'VIN_BodyStyle', 'Original_Description_Input',
-                    'Normalized_Description_Input', 'Equivalencia_Row_ID', 'Confirmed_SKU',
+                    'Maestro_ID', 'VIN_Make', 'VIN_Year_Min', 'VIN_Year_Max',
+                    'VIN_Series_Trim', 'Original_Description_Input',
+                    'Normalized_Description_Input', 'Confirmed_SKU',
                     'Confidence', 'Source', 'Date_Added'
                 ]
                 df_to_save = pd.DataFrame(
