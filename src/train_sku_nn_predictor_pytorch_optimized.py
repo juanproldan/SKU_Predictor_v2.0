@@ -31,12 +31,12 @@ VOCAB_SIZE = 10000  # Max number of words to keep in the vocabulary
 MAX_SEQUENCE_LENGTH = 30  # Reduced from 50 to 30
 EMBEDDING_DIM = 64  # Reduced from 100 to 64
 HIDDEN_DIM = 64  # Reduced from 128 to 64
-BATCH_SIZE = 64  # Increased from 32 to 64
+BATCH_SIZE = 128  # Increased for full dataset training
 EPOCHS = 50
 LEARNING_RATE = 0.001
-VIN_BATCH_SIZE = 1000  # Process VINs in batches
+VIN_BATCH_SIZE = 5000  # Process VINs in larger batches for full dataset
 # Set to a number (e.g., 50000) to use a subset of data, or None for all data
-SAMPLE_SIZE = None  # Using full dataset for training
+SAMPLE_SIZE = None  # Using full dataset for production training
 
 # --- Load VIN Predictor Models ---
 try:

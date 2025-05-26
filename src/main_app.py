@@ -874,7 +874,7 @@ class FixacarApp:
                             f"Warning: Could not convert predicted year '{vin_year_str_scalar}' to integer.")
                         vin_year = None  # Ensure it's None if conversion fails
 
-                # Enhanced Maestro Search with 4-parameter matching
+                # Enhanced Maestro Search with 3-parameter exact + fuzzy description matching
                 print(f"  Searching Maestro data ({len(maestro_data_global)} entries)...")
 
                 # Get predicted series for matching
@@ -884,46 +884,88 @@ class FixacarApp:
                 else:
                     vin_series = str(predicted_series_val) if pd.notna(predicted_series_val) else 'N/A'
 
+                # First pass: Exact matches on Make, Year, Series + exact description
                 for maestro_entry in maestro_data_global:
-                    # Try 4-parameter matching: Make, Year, Series, Description
                     maestro_make = str(maestro_entry.get('VIN_Make', '')).upper()
                     maestro_year = str(maestro_entry.get('VIN_Year_Min', ''))
                     maestro_series = str(maestro_entry.get('VIN_Series_Trim', ''))
                     maestro_desc = str(maestro_entry.get('Normalized_Description_Input', '')).lower()
 
-                    # Check 4-parameter match
+                    # Check 3-parameter exact match (Make, Year, Series)
                     make_match = maestro_make == vin_make
                     year_match = maestro_year == vin_year_str_scalar
                     series_match = maestro_series.upper() == vin_series.upper()
-                    desc_match = maestro_desc == normalized_desc.lower()
 
-                    if make_match and year_match and series_match and desc_match:
-                        sku = maestro_entry.get('Confirmed_SKU')
-                        if sku and sku.strip() and sku not in suggestions:
-                            suggestions[sku] = {"confidence": 1.0, "source": "Maestro"}
-                            print(f"    ✅ Found in Maestro (4-param): {sku} (Conf: 1.0)")
+                    if make_match and year_match and series_match:
+                        # Check for exact description match
+                        desc_match = maestro_desc == normalized_desc.lower()
 
-                    # Fallback: Try EqID matching if available
-                    elif eq_id is not None:
-                        eq_match = maestro_entry.get('Equivalencia_Row_ID') == eq_id
-                        if eq_match and make_match and year_match:
+                        if desc_match:
                             sku = maestro_entry.get('Confirmed_SKU')
                             if sku and sku.strip() and sku not in suggestions:
-                                suggestions[sku] = {"confidence": 0.9, "source": "Maestro (EqID)"}
-                                print(f"    Found in Maestro (EqID): {sku} (Conf: 0.9)")
+                                suggestions[sku] = {"confidence": 1.0, "source": "Maestro (Exact)"}
+                                print(f"    ✅ Found in Maestro (Exact 4-param): {sku} (Conf: 1.0)")
 
-                # SQLite Search (ID Match - Adjust matching)
-                if eq_id is not None and vin_year is not None:
-                    print(
-                        f"  Searching SQLite DB (EqID: {eq_id}, Year: {vin_year})...")
+                # Second pass: Fuzzy description matching for same Make, Year, Series
+                if not suggestions:  # Only do fuzzy if no exact matches found
                     try:
-                        # Query without Model if it's not reliably predicted
+                        from utils.fuzzy_matcher import find_best_match
+
+                        # Get all descriptions from matching Make, Year, Series entries
+                        matching_entries = []
+                        for maestro_entry in maestro_data_global:
+                            maestro_make = str(maestro_entry.get('VIN_Make', '')).upper()
+                            maestro_year = str(maestro_entry.get('VIN_Year_Min', ''))
+                            maestro_series = str(maestro_entry.get('VIN_Series_Trim', ''))
+
+                            if (maestro_make == vin_make and
+                                maestro_year == vin_year_str_scalar and
+                                maestro_series.upper() == vin_series.upper()):
+                                matching_entries.append(maestro_entry)
+
+                        if matching_entries:
+                            # Extract descriptions for fuzzy matching
+                            candidate_descriptions = [
+                                str(entry.get('Normalized_Description_Input', '')).lower()
+                                for entry in matching_entries
+                            ]
+
+                            # Find best fuzzy match
+                            match_result = find_best_match(
+                                normalized_desc.lower(), candidate_descriptions, threshold=0.8)
+
+                            if match_result:
+                                best_match_desc, similarity = match_result
+
+                                # Find the entry with this description
+                                for entry in matching_entries:
+                                    entry_desc = str(entry.get('Normalized_Description_Input', '')).lower()
+                                    if entry_desc == best_match_desc:
+                                        sku = entry.get('Confirmed_SKU')
+                                        if sku and sku.strip() and sku not in suggestions:
+                                            # Confidence based on similarity (0.8-0.95 range)
+                                            confidence = round(0.7 + 0.25 * similarity, 3)
+                                            suggestions[sku] = {
+                                                "confidence": confidence,
+                                                "source": f"Maestro (Fuzzy: {similarity:.2f})"
+                                            }
+                                            print(f"    ✅ Found in Maestro (Fuzzy): {sku} (Sim: {similarity:.2f}, Conf: {confidence})")
+                                        break
+                    except ImportError:
+                        print("    Fuzzy matching not available for Maestro search")
+
+                # SQLite Search (4-parameter matching: Make, Year, Series, Description)
+                if vin_year is not None and vin_series != 'N/A':
+                    print(
+                        f"  Searching SQLite DB (Make: {vin_make}, Year: {vin_year}, Series: {vin_series})...")
+                    try:
+                        # Query with Make, Year, Series, and normalized description
                         cursor.execute("""
                             SELECT sku, COUNT(*) as frequency
                             FROM historical_parts
-                            WHERE vin_make = ? AND vin_year = ? AND Equivalencia_Row_ID = ?
+                            WHERE vin_make = ? AND vin_year = ? AND vin_series = ? AND normalized_description = ?
                             GROUP BY sku
-                        """, (vin_make, vin_year, eq_id))  # Removed vin_model from WHERE
+                        """, (vin_make, vin_year, vin_series, normalized_desc))
                         results = cursor.fetchall()
                         total_matches = sum(row[1] for row in results)
                         for sku, frequency in results:
@@ -931,123 +973,79 @@ class FixacarApp:
                                 confidence = round(
                                     0.5 + 0.4 * (frequency / total_matches), 3) if total_matches > 0 else 0.5
                                 suggestions[sku] = {
-                                    "confidence": confidence, "source": f"DB (ID:{eq_id})"}
+                                    "confidence": confidence, "source": f"DB (4-param)"}
                                 print(
-                                    f"    Found in DB (ID Match): {sku} (Freq: {frequency}, Conf: {confidence})")
+                                    f"    Found in DB (4-param): {sku} (Freq: {frequency}, Conf: {confidence})")
                     except Exception as db_err:
                         print(
-                            f"    Error querying SQLite DB (ID Match): {db_err}")
+                            f"    Error querying SQLite DB (4-param): {db_err}")
 
-                # Fallback Search with Fuzzy Matching
-                if eq_id is None:  # This block is for fallback if no Equivalencia_Row_ID
+                # Fallback: 3-parameter search if no results (Make, Year, Series only)
+                if not suggestions and vin_year is not None and vin_series != 'N/A':
                     print(
-                        f"  Fallback Search (Normalized: '{normalized_desc}')...")
+                        f"  Fallback SQLite search (3-param: Make, Year, Series)...")
+                    try:
+                        cursor.execute("""
+                            SELECT sku, normalized_description, COUNT(*) as frequency
+                            FROM historical_parts
+                            WHERE vin_make = ? AND vin_year = ? AND vin_series = ?
+                            GROUP BY sku, normalized_description
+                            ORDER BY frequency DESC
+                        """, (vin_make, vin_year, vin_series))
+                        results = cursor.fetchall()
 
-                    # Fallback in Maestro with fuzzy matching
-                    if maestro_data_global:
-                        # Get all normalized descriptions from Maestro
-                        maestro_normalized_descs = [
-                            entry.get('Normalized_Description_Input', '')
-                            for entry in maestro_data_global
-                            if entry.get('VIN_Make') == vin_make and
-                            str(entry.get('VIN_Year_Min')) == vin_year_str
-                        ]
-
-                        # Try to find fuzzy matches
+                        # Try fuzzy matching on descriptions
                         try:
-                            from utils.fuzzy_matcher import get_fuzzy_matches
-                            fuzzy_matches = get_fuzzy_matches(
-                                normalized_desc, maestro_normalized_descs, threshold=0.8)
+                            from utils.fuzzy_matcher import find_best_match
 
-                            for match_desc, similarity in fuzzy_matches:
-                                # Find all Maestro entries with this normalized description
-                                for maestro_entry in maestro_data_global:
-                                    if (maestro_entry.get('Normalized_Description_Input') == match_desc and
-                                        maestro_entry.get('VIN_Make') == vin_make and
-                                            str(maestro_entry.get('VIN_Year_Min')) == vin_year_str):
-                                        sku = maestro_entry.get(
-                                            'Confirmed_SKU')
-                                        if sku and sku.strip() and sku not in suggestions:
-                                            # Adjust confidence based on similarity
-                                            confidence = 0.2 * similarity
-                                            suggestions[sku] = {
-                                                "confidence": confidence,
-                                                "source": f"Maestro (Fuzzy: {similarity:.2f})"
-                                            }
-                                            print(
-                                                f"    Found in Maestro (Fuzzy): {sku} (Sim: {similarity:.2f}, Conf: {confidence:.2f})")
+                            # Group by SKU and find best description match for each
+                            sku_descriptions = {}
+                            for sku, desc, frequency in results:
+                                if sku not in sku_descriptions:
+                                    sku_descriptions[sku] = []
+                                sku_descriptions[sku].append((desc, frequency))
+
+                            for sku, desc_freq_list in sku_descriptions.items():
+                                if sku and sku.strip() and sku not in suggestions:
+                                    # Get all descriptions for this SKU
+                                    descriptions = [desc for desc, _ in desc_freq_list]
+
+                                    # Find best fuzzy match
+                                    match_result = find_best_match(
+                                        normalized_desc, descriptions, threshold=0.8)
+
+                                    if match_result:
+                                        best_match_desc, similarity = match_result
+                                        # Find frequency for this description
+                                        frequency = next(freq for desc, freq in desc_freq_list if desc == best_match_desc)
+
+                                        # Confidence based on similarity and frequency
+                                        base_confidence = 0.3 + 0.3 * similarity
+                                        total_freq = sum(freq for _, freq in desc_freq_list)
+                                        freq_boost = 0.2 * (frequency / total_freq) if total_freq > 0 else 0
+                                        confidence = round(base_confidence + freq_boost, 3)
+
+                                        suggestions[sku] = {
+                                            "confidence": confidence,
+                                            "source": f"DB (3-param Fuzzy: {similarity:.2f})"
+                                        }
+                                        print(
+                                            f"    Found in DB (3-param Fuzzy): {sku} (Sim: {similarity:.2f}, Freq: {frequency}, Conf: {confidence})")
                         except ImportError:
-                            # Fall back to exact matching if fuzzy_matcher is not available
-                            for maestro_entry in maestro_data_global:
-                                # Match on Make, Year, Normalized Desc
-                                if (maestro_entry.get('Normalized_Description_Input') == normalized_desc and
-                                    maestro_entry.get('VIN_Make') == vin_make and
-                                        str(maestro_entry.get('VIN_Year_Min')) == vin_year_str):
-                                    sku = maestro_entry.get('Confirmed_SKU')
-                                    if sku and sku.strip() and sku not in suggestions:
-                                        suggestions[sku] = {
-                                            "confidence": 0.2, "source": "Maestro (Fallback)"}
-                                        print(
-                                            f"    Found in Maestro (Fallback): {sku} (Conf: 0.2)")
+                            # Fallback to exact description matching
+                            for sku, desc, frequency in results:
+                                if sku and sku.strip() and sku not in suggestions and desc == normalized_desc:
+                                    suggestions[sku] = {
+                                        "confidence": 0.4, "source": "DB (3-param Exact)"}
+                                    print(
+                                        f"    Found in DB (3-param Exact): {sku} (Freq: {frequency}, Conf: 0.4)")
+                    except Exception as db_err:
+                        print(
+                            f"    Error querying SQLite DB (3-param): {db_err}")
 
-                    # Fallback in SQLite with fuzzy matching
-                    if vin_year is not None:
-                        try:
-                            # First get all normalized descriptions from the database for this make and year
-                            cursor.execute("""
-                                SELECT DISTINCT normalized_description
-                                FROM historical_parts
-                                WHERE vin_make = ? AND vin_year = ?
-                            """, (vin_make, vin_year))
 
-                            db_normalized_descs = [row[0]
-                                                   for row in cursor.fetchall()]
 
-                            # Try to find fuzzy matches
-                            try:
-                                from utils.fuzzy_matcher import get_fuzzy_matches
-                                fuzzy_matches = get_fuzzy_matches(
-                                    normalized_desc, db_normalized_descs, threshold=0.8)
 
-                                for match_desc, similarity in fuzzy_matches:
-                                    # Query for SKUs with this normalized description
-                                    cursor.execute("""
-                                        SELECT sku, COUNT(*) as frequency
-                                        FROM historical_parts
-                                        WHERE vin_make = ? AND vin_year = ? AND normalized_description = ?
-                                        GROUP BY sku
-                                    """, (vin_make, vin_year, match_desc))
-
-                                    results = cursor.fetchall()
-                                    for sku, frequency in results:
-                                        if sku and sku.strip() and sku not in suggestions:
-                                            # Adjust confidence based on similarity
-                                            confidence = 0.1 * similarity
-                                            suggestions[sku] = {
-                                                "confidence": confidence,
-                                                "source": f"DB (Fuzzy: {similarity:.2f})"
-                                            }
-                                            print(
-                                                f"    Found in DB (Fuzzy): {sku} (Sim: {similarity:.2f}, Freq: {frequency}, Conf: {confidence:.2f})")
-                            except ImportError:
-                                # Fall back to exact matching if fuzzy_matcher is not available
-                                cursor.execute("""
-                                    SELECT sku, COUNT(*) as frequency
-                                    FROM historical_parts
-                                    WHERE vin_make = ? AND vin_year = ? AND normalized_description = ?
-                                    GROUP BY sku
-                                """, (vin_make, vin_year, normalized_desc))
-
-                                results = cursor.fetchall()
-                                for sku, frequency in results:
-                                    if sku and sku.strip() and sku not in suggestions:
-                                        suggestions[sku] = {
-                                            "confidence": 0.1, "source": f"DB (Text Fallback)"}
-                                        print(
-                                            f"    Found in DB (Fallback): {sku} (Conf: 0.1)")
-                        except Exception as db_err:
-                            print(
-                                f"    Error querying SQLite DB (Fallback): {db_err}")
 
                 # --- Add SKU NN Prediction ---
                 # Ensure vehicle details are strings for the NN model
