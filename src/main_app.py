@@ -63,6 +63,7 @@ NUM_CONSOLIDADO_CHUNKS_FOR_VIN_LOAD = 10
 
 # In-memory data stores
 equivalencias_map_global = {}
+synonym_expansion_map_global = {}  # New: maps synonyms to canonical forms
 maestro_data_global = []  # This will hold the list of dictionaries
 # VIN details lookup is replaced by models
 
@@ -101,7 +102,7 @@ class FixacarApp:
 
     def load_all_data_and_models(self):
         """Loads data files and trained prediction models on startup."""
-        global equivalencias_map_global, maestro_data_global
+        global equivalencias_map_global, synonym_expansion_map_global, maestro_data_global
         global model_maker, encoder_x_maker, encoder_y_maker
         global model_year, encoder_x_year, encoder_y_year
         global model_series, encoder_x_series, encoder_y_series
@@ -220,8 +221,41 @@ class FixacarApp:
         # DB connection will be established when needed for search
         print("--- Application Data & Model Loading Complete ---")
 
+    def expand_synonyms(self, text: str) -> str:
+        """
+        Global synonym expansion function that preprocesses text by replacing
+        synonyms with their canonical forms before any prediction method.
+
+        This ensures ALL prediction sources (Maestro, Database, Neural Network)
+        receive the same normalized input after synonym expansion.
+        """
+        if not text or not synonym_expansion_map_global:
+            return text
+
+        # Split text into words
+        words = text.split()
+        expanded_words = []
+
+        for word in words:
+            # Normalize the word first
+            normalized_word = normalize_text(word)
+
+            # Check if this word has a canonical form
+            if normalized_word in synonym_expansion_map_global:
+                canonical_form = synonym_expansion_map_global[normalized_word]
+                expanded_words.append(canonical_form)
+                print(f"    Synonym expansion: '{word}' -> '{canonical_form}'")
+            else:
+                expanded_words.append(normalized_word)
+
+        expanded_text = ' '.join(expanded_words)
+        return expanded_text
+
     def load_equivalencias_data(self, file_path: str) -> dict:
-        # (Content remains the same as before)
+        """
+        Load equivalencias data and create both ID mapping and synonym expansion dictionary.
+        Returns the ID mapping (for backward compatibility).
+        """
         print(f"Loading equivalencias from: {file_path}")
         if not os.path.exists(file_path):
             print(
@@ -230,16 +264,33 @@ class FixacarApp:
         try:
             df = pd.read_excel(file_path, sheet_name=0)
             equivalencias_map = {}
+            synonym_expansion_map = {}  # New: maps synonyms to canonical forms
+
             for index, row in df.iterrows():
                 equivalencia_row_id = index + 1
+                row_terms = []  # Collect all terms in this row
+
+                # First pass: collect all normalized terms in this row
                 for col_name in df.columns:
                     term = row[col_name]
                     if pd.notna(term) and str(term).strip():
                         normalized_term = normalize_text(str(term))
                         if normalized_term:
+                            row_terms.append(normalized_term)
                             equivalencias_map[normalized_term] = equivalencia_row_id
-            print(
-                f"Loaded {len(equivalencias_map)} normalized term mappings from {len(df)} rows in Equivalencias.")
+
+                # Second pass: create synonym mappings (all terms map to the first/canonical term)
+                if row_terms:
+                    canonical_term = row_terms[0]  # Use first term as canonical
+                    for term in row_terms:
+                        synonym_expansion_map[term] = canonical_term
+
+            # Store the synonym expansion map globally for use in preprocessing
+            global synonym_expansion_map_global
+            synonym_expansion_map_global = synonym_expansion_map
+
+            print(f"Loaded {len(equivalencias_map)} normalized term mappings from {len(df)} rows in Equivalencias.")
+            print(f"Created {len(synonym_expansion_map)} synonym expansion mappings.")
             return equivalencias_map
         except Exception as e:
             print(
@@ -719,60 +770,52 @@ class FixacarApp:
                 line.strip() for line in part_descriptions_raw.splitlines() if line.strip()]
             print(f"Original Descriptions List: {original_descriptions}")
             for original_desc in original_descriptions:
-                # First try standard normalization
-                standard_normalized_desc = normalize_text(original_desc)
-                equivalencia_id = equivalencias_map_global.get(
-                    standard_normalized_desc)
+                print(f"  Processing: '{original_desc}'")
 
-                # If no match found with standard normalization, try fuzzy normalization
+                # STEP 1: Apply global synonym expansion FIRST
+                # This ensures ALL prediction methods get the same canonical input
+                expanded_desc = self.expand_synonyms(original_desc)
+                print(f"  After synonym expansion: '{expanded_desc}'")
+
+                # STEP 2: Normalize the expanded description
+                normalized_desc = normalize_text(expanded_desc)
+                print(f"  After normalization: '{normalized_desc}'")
+
+                # STEP 3: Look up equivalencia ID using the final normalized form
+                equivalencia_id = equivalencias_map_global.get(normalized_desc)
+
+                # STEP 4: If no direct match, try fuzzy matching as fallback
                 if equivalencia_id is None:
-                    fuzzy_normalized_desc = normalize_text(
-                        original_desc, use_fuzzy=True)
-                    print(
-                        f"  Fuzzy normalized: '{original_desc}' -> '{fuzzy_normalized_desc}'")
+                    fuzzy_normalized_desc = normalize_text(expanded_desc, use_fuzzy=True)
+                    equivalencia_id = equivalencias_map_global.get(fuzzy_normalized_desc)
 
-                    # Try to find a direct match with the fuzzy normalized text
-                    equivalencia_id = equivalencias_map_global.get(
-                        fuzzy_normalized_desc)
+                    if equivalencia_id is not None:
+                        normalized_desc = fuzzy_normalized_desc
+                        print(f"  Found via fuzzy normalization: EqID {equivalencia_id}")
 
-                    # If still no match, try to find the closest match in the equivalencias map
+                    # Final fallback: try fuzzy matching against all equivalencias terms
                     if equivalencia_id is None and equivalencias_map_global:
-                        # Get all normalized terms from the equivalencias map
-                        normalized_terms = list(
-                            equivalencias_map_global.keys())
-
-                        # Try to find the best match with a similarity threshold of 0.8
+                        normalized_terms = list(equivalencias_map_global.keys())
                         try:
                             from utils.fuzzy_matcher import find_best_match
                             match_result = find_best_match(
-                                fuzzy_normalized_desc, normalized_terms, threshold=0.8)
+                                normalized_desc, normalized_terms, threshold=0.8)
 
                             if match_result:
                                 best_match, similarity = match_result
-                                equivalencia_id = equivalencias_map_global.get(
-                                    best_match)
-                                print(
-                                    f"  Found fuzzy match: '{best_match}' (similarity: {similarity:.2f}, EqID: {equivalencia_id})")
+                                equivalencia_id = equivalencias_map_global.get(best_match)
+                                normalized_desc = best_match
+                                print(f"  Found via fuzzy match: '{best_match}' (similarity: {similarity:.2f}, EqID: {equivalencia_id})")
                         except ImportError:
-                            # If fuzzy_matcher is not available, we'll continue without it
                             pass
-
-                    # Use the fuzzy normalized description if it found a match
-                    if equivalencia_id is not None:
-                        normalized_desc = fuzzy_normalized_desc
-                    else:
-                        # Fall back to standard normalization if no match found
-                        normalized_desc = standard_normalized_desc
-                else:
-                    normalized_desc = standard_normalized_desc
 
                 self.processed_parts.append({
                     "original": original_desc,
+                    "expanded": expanded_desc,  # New: store the synonym-expanded form
                     "normalized": normalized_desc,
                     "equivalencia_id": equivalencia_id
                 })
-                print(
-                    f"Processed: '{original_desc}' -> Normalized: '{normalized_desc}', EqID: {equivalencia_id}")
+                print(f"  Final result: '{original_desc}' -> Expanded: '{expanded_desc}' -> Normalized: '{normalized_desc}', EqID: {equivalencia_id}")
         else:
             print("No part descriptions entered.")
             self.processed_parts = []
@@ -796,10 +839,11 @@ class FixacarApp:
 
             for part_info in self.processed_parts:
                 original_desc = part_info["original"]
+                expanded_desc = part_info["expanded"]  # New: use expanded form
                 normalized_desc = part_info["normalized"]
                 eq_id = part_info["equivalencia_id"]
                 print(
-                    f"\nSearching for: '{original_desc}' (Normalized: '{normalized_desc}', EqID: {eq_id})")
+                    f"\nSearching for: '{original_desc}' (Expanded: '{expanded_desc}', Normalized: '{normalized_desc}', EqID: {eq_id})")
 
                 suggestions = {}
 
@@ -1021,12 +1065,12 @@ class FixacarApp:
 
                 if vin_make != 'N/A' and vin_year_str_scalar != 'N/A' and vin_series_str_for_nn != 'N/A':
                     print(
-                        f"  Attempting SKU NN prediction for: Make='{vin_make}', Year='{vin_year_str_scalar}', Series='{vin_series_str_for_nn}', Desc='{original_desc}'")
+                        f"  Attempting SKU NN prediction for: Make='{vin_make}', Year='{vin_year_str_scalar}', Series='{vin_series_str_for_nn}', Desc='{expanded_desc}'")
                     sku_nn_output = self._get_sku_nn_prediction(
                         make=vin_make,
                         model_year=vin_year_str_scalar,  # Already a string
                         series=vin_series_str_for_nn,
-                        description=original_desc  # Helper will normalize
+                        description=expanded_desc  # Use expanded description for consistency
                     )
                     if sku_nn_output:
                         nn_sku, nn_confidence = sku_nn_output
