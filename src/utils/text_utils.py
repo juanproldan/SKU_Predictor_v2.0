@@ -103,7 +103,8 @@ def get_noun_gender(word: str) -> str:
         'cojinete', 'reten', 'soporte', 'brazo', 'triangulo', 'rotula',
         'estabilizador', 'bieleta', 'tirante', 'travesano', 'larguero',
         'refuerzo', 'marco', 'chasis', 'bastidor', 'capo', 'maletero',
-        'techo', 'techo', 'cristal', 'vidrio', 'elevalunas', 'regulador'
+        'techo', 'techo', 'cristal', 'vidrio', 'elevalunas', 'regulador',
+        'guardapolvo', 'broche', 'remache', 'tornillo', 'perno'  # Added missing parts
     }
 
     # Explicit feminine automotive parts
@@ -118,7 +119,7 @@ def get_noun_gender(word: str) -> str:
         'carcasa', 'caja', 'palanca', 'varilla', 'barra', 'biela',
         'cruceta', 'horquilla', 'zapata', 'pastilla', 'lona', 'banda',
         'placa', 'chapa', 'plancha', 'rejilla', 'parrilla', 'mascara',
-        'guia'  # Added: GUIA is feminine (la guía)
+        'guia', 'tuerca', 'arandela'  # Added: GUIA is feminine (la guía), plus other feminine parts
     }
 
     if word in masculine_parts:
@@ -159,11 +160,12 @@ def expand_linguistic_variations_text(text: str) -> str:
         # Handle context-dependent single-letter abbreviations
         if word in ['d', 't'] and i > 0:
             expanded_word = expand_context_dependent_abbreviation(word, words[i-1])
-        # Handle gender-dependent abbreviations (left/right and front/rear)
-        elif word in ['i', 'iz', 'izq', 'der', 'dere', 'derec', 'derech', 'del', 'delan', 'delant', 'delante', 'tra', 'tras', 'trase', 'traser'] and i > 0:
+        # Handle gender-dependent abbreviations AND full words that need gender agreement
+        elif word in ['i', 'iz', 'izq', 'der', 'dere', 'derec', 'derech', 'del', 'delan', 'delant', 'delante', 'tra', 'tras', 'trase', 'traser',
+                     'izquierdo', 'izquierda', 'derecho', 'derecha', 'delantero', 'delantera', 'trasero', 'trasera']:
             # Pass complete context for better gender agreement analysis
             expanded_word = expand_gender_dependent_abbreviation(
-                word, words[i-1], all_words=words, word_index=i)
+                word, words[i-1] if i > 0 else "", all_words=words, word_index=i)
         else:
             expanded_word = expand_single_word_linguistic(word)
         expanded_words.append(expanded_word)
@@ -212,17 +214,22 @@ def handle_abbreviation_patterns(words: list) -> list:
         current_word = words[i].lower()
         next_word = words[i + 1].lower() if i + 1 < len(words) else ""
 
-        # Find main noun for gender agreement
-        main_noun = ""
-        for j in range(len(words)):
+        # Find immediate noun for gender agreement (FIXED)
+        # For pattern matching, we need to find the noun that the directional adjectives should agree with
+        immediate_noun = ""
+
+        # Look backwards from the current position to find the nearest noun
+        for j in range(i - 1, -1, -1):
             word = words[j].lower()
             if word in {'guia', 'farola', 'luz', 'puerta', 'aleta', 'chapa', 'rejilla', 'parrilla', 'mascara',
                        'guardafango', 'paragolpes', 'espejo', 'faro', 'absorbedor', 'radiador', 'soporte',
-                       'guardapolvo', 'bomper', 'bumper', 'capo', 'tapa', 'cubierta', 'moldura'}:
-                main_noun = word
+                       'guardapolvo', 'bomper', 'bumper', 'capo', 'tapa', 'cubierta', 'moldura',
+                       'broches', 'broche', 'remache', 'remaches'}:
+                immediate_noun = word
                 break
 
-        gender = get_noun_gender(main_noun) if main_noun else 'masculine'
+        gender = get_noun_gender(immediate_noun) if immediate_noun else 'masculine'
+        print(f"    Pattern gender agreement: position {i}, immediate noun: '{immediate_noun}' ({gender})")
 
         # Check if current word is a position abbreviation
         is_front = current_word in position_front_abbrevs
@@ -285,38 +292,51 @@ def handle_abbreviation_patterns(words: list) -> list:
     return result
 
 
-def find_main_noun_in_phrase(words: list, current_index: int) -> str:
+def find_immediate_noun_for_adjective(words: list, current_index: int) -> str:
     """
-    Finds the main noun in a phrase to determine gender agreement.
+    Finds the immediate noun that an adjective should agree with in Spanish automotive terms.
 
-    In Spanish automotive terms, the main noun is usually the FIRST noun in the phrase.
-    All adjectives in the phrase should agree with this main noun.
-    Example: "GUIA LATERAL IZQUIERDA PARAGOLPES DELANTERA"
-    -> main noun is "GUIA" (feminine), so all adjectives should be feminine
+    CORRECT Spanish Grammar Rule:
+    Each adjective agrees with its IMMEDIATE noun, not the first noun in the phrase.
+
+    Examples:
+    - "GUIA LATERAL IZQUIERDA PARAGOLPES DELANTERO"
+      * "LATERAL IZQUIERDA" agree with "GUIA" (feminine)
+      * "DELANTERO" agrees with "PARAGOLPES" (masculine)
+
+    - "BROCHES GUARDAPOLVO PLASTICO DELANTERO DERECHO"
+      * "PLASTICO" agrees with "GUARDAPOLVO" (masculine)
+      * "DELANTERO DERECHO" agree with "GUARDAPOLVO" (masculine)
 
     Args:
         words: List of words in the phrase
-        current_index: Index of the current word being processed
+        current_index: Index of the current adjective being processed
 
     Returns:
-        The main noun that should determine gender agreement
+        The immediate noun that should determine gender agreement for this adjective
     """
-    # First, look for the FIRST noun in the entire phrase (main noun)
-    for i in range(len(words)):
-        word = words[i].lower()
-        # Check if this word is a known automotive noun with explicit gender
-        if word in {'guia', 'farola', 'luz', 'puerta', 'aleta', 'chapa', 'rejilla', 'parrilla', 'mascara',
-                   'guardafango', 'paragolpes', 'espejo', 'faro', 'absorbedor', 'radiador', 'soporte',
-                   'bomper', 'bumper', 'capo', 'tapa', 'cubierta', 'moldura', 'maneta', 'cerradura'}:
-            return word
-
-    # If no explicit main noun found, look backwards from current position
+    # Look backwards from current position to find the nearest noun
     for i in range(current_index - 1, -1, -1):
         word = words[i].lower()
-        if get_noun_gender(word) in ['masculine', 'feminine']:
+
+        # Check if this word is a known automotive noun
+        if word in {'guia', 'farola', 'luz', 'puerta', 'aleta', 'chapa', 'rejilla', 'parrilla', 'mascara',
+                   'guardafango', 'paragolpes', 'espejo', 'faro', 'absorbedor', 'radiador', 'soporte',
+                   'bomper', 'bumper', 'capo', 'tapa', 'cubierta', 'moldura', 'maneta', 'cerradura',
+                   'guardapolvo', 'broches', 'broche', 'remache', 'remaches', 'tornillo', 'tornillos',
+                   'perno', 'pernos', 'tuerca', 'tuercas', 'arandela', 'arandelas'}:
             return word
 
-    # Final fallback: use the immediately preceding word
+        # Check if it's a noun based on Spanish grammar rules
+        if (word.endswith(('o', 'a', 'or', 'aje', 'an', 'en', 'in', 'on', 'un', 'ion', 'dad', 'tad', 'tud', 'ez', 'eza'))
+            and len(word) > 2):  # Avoid single letters and very short words
+            # Additional check: make sure it's not an adjective we just processed
+            if word not in {'lateral', 'izquierdo', 'izquierda', 'derecho', 'derecha',
+                           'delantero', 'delantera', 'trasero', 'trasera', 'superior', 'inferior',
+                           'plastico', 'plastica', 'metalico', 'metalica', 'cromado', 'cromada'}:
+                return word
+
+    # Final fallback: use the immediately preceding word if it exists
     if current_index > 0:
         return words[current_index - 1].lower()
 
@@ -325,7 +345,10 @@ def find_main_noun_in_phrase(words: list, current_index: int) -> str:
 
 def expand_gender_dependent_abbreviation(abbrev: str, context_word: str, all_words: list = None, word_index: int = -1) -> str:
     """
-    Expands gender-dependent abbreviations based on the gender of the main noun in the phrase.
+    Expands gender-dependent abbreviations based on the gender of the IMMEDIATE noun.
+
+    FIXED: Now uses correct Spanish grammar - each adjective agrees with its immediate noun,
+    not the first noun in the phrase.
 
     Args:
         abbrev: The abbreviation ('i', 'iz', 'izq', 'der', 'del', 'tra', etc.)
@@ -339,25 +362,36 @@ def expand_gender_dependent_abbreviation(abbrev: str, context_word: str, all_wor
     if not abbrev:
         return abbrev
 
-    # Determine the gender using improved context analysis
+    # Determine the gender using IMMEDIATE noun analysis (FIXED)
     if all_words and word_index >= 0:
-        main_noun = find_main_noun_in_phrase(all_words, word_index)
-        gender = get_noun_gender(main_noun) if main_noun else 'masculine'
+        immediate_noun = find_immediate_noun_for_adjective(all_words, word_index)
+        gender = get_noun_gender(immediate_noun) if immediate_noun else 'masculine'
+        print(f"    Gender agreement: '{abbrev}' → immediate noun: '{immediate_noun}' ({gender}) → ", end="")
     else:
         # Fallback to old behavior for backward compatibility
         gender = get_noun_gender(context_word) if context_word else 'masculine'
+        print(f"    Gender agreement (fallback): '{abbrev}' → context: '{context_word}' ({gender}) → ", end="")
 
-    # Map abbreviations to their masculine and feminine forms
-    if abbrev in ['i', 'iz', 'izq']:
-        return 'izquierdo' if gender == 'masculine' else 'izquierda'
-    elif abbrev in ['der', 'dere', 'derec', 'derech']:
-        return 'derecho' if gender == 'masculine' else 'derecha'
-    elif abbrev in ['del', 'delan', 'delant', 'delante']:
-        return 'delantero' if gender == 'masculine' else 'delantera'
-    elif abbrev in ['tra', 'tras', 'trase', 'traser']:
-        return 'trasero' if gender == 'masculine' else 'trasera'
+    # Map abbreviations AND full words to their correct gender forms
+    if abbrev in ['i', 'iz', 'izq', 'izquierdo', 'izquierda']:
+        result = 'izquierdo' if gender == 'masculine' else 'izquierda'
+        print(f"'{result}'")
+        return result
+    elif abbrev in ['der', 'dere', 'derec', 'derech', 'derecho', 'derecha']:
+        result = 'derecho' if gender == 'masculine' else 'derecha'
+        print(f"'{result}'")
+        return result
+    elif abbrev in ['del', 'delan', 'delant', 'delante', 'delantero', 'delantera']:
+        result = 'delantero' if gender == 'masculine' else 'delantera'
+        print(f"'{result}'")
+        return result
+    elif abbrev in ['tra', 'tras', 'trase', 'traser', 'trasero', 'trasera']:
+        result = 'trasero' if gender == 'masculine' else 'trasera'
+        print(f"'{result}'")
+        return result
 
     # Return unchanged if not handled
+    print(f"'{abbrev}' (unchanged)")
     return abbrev
 
 

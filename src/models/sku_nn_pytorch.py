@@ -9,8 +9,8 @@ import joblib
 MAX_SEQUENCE_LENGTH = 50  # Original model sequence length
 EMBEDDING_DIM = 100  # Original model embedding dimension
 OPTIMIZED_MAX_SEQUENCE_LENGTH = 30  # Optimized model sequence length
-OPTIMIZED_EMBEDDING_DIM = 64  # Optimized model embedding dimension
-OPTIMIZED_HIDDEN_DIM = 64  # Optimized model hidden dimension
+OPTIMIZED_EMBEDDING_DIM = 128  # TEMPORARILY CHANGED: Match saved model (was 64)
+OPTIMIZED_HIDDEN_DIM = 128  # TEMPORARILY CHANGED: Match saved model (was 64)
 
 
 class OptimizedSKUNNModel(nn.Module):

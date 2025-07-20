@@ -257,6 +257,39 @@ class FixacarApp:
         expanded_text = ' '.join(expanded_words)
         return expanded_text
 
+    def unified_text_preprocessing(self, text: str) -> str:
+        """
+        Unified Text Preprocessing Pipeline for ALL text comparisons in the SKU prediction system.
+
+        This ensures that BOTH input descriptions AND target comparison texts (from Database/Maestro)
+        receive identical preprocessing, eliminating false penalties for linguistically equivalent terms.
+
+        Pipeline:
+        1. Synonym Expansion: Apply Equivalencias.xlsx industry synonyms
+        2. Linguistic Normalization: Expand abbreviations, handle gender agreement, plurals/singulars
+        3. Text Normalization: Convert to lowercase, remove extra spaces, standardize punctuation
+
+        Example:
+        - Input: "FAROLA IZQ" → "faro izquierdo"
+        - Target: "FAROLA IZQUIERDA" → "faro izquierdo"
+        - Result: Perfect match (1.0 similarity) instead of penalized fuzzy match (0.85)
+        """
+        if not text or not text.strip():
+            return ""
+
+        # Step 1: Apply synonym expansion (industry-specific terms from Equivalencias.xlsx)
+        expanded_text = self.expand_synonyms(text)
+
+        # Step 2: Apply comprehensive linguistic normalization
+        # This handles abbreviations, gender agreement, plurals/singulars
+        normalized_text = normalize_text(expanded_text, expand_linguistic_variations=True)
+
+        # Step 3: Final text normalization (lowercase, spaces, punctuation)
+        final_text = normalized_text.lower().strip()
+
+        print(f"    Unified preprocessing: '{text}' → '{final_text}'")
+        return final_text
+
     def create_abbreviated_version(self, description: str) -> str:
         """
         Create abbreviated version of description to match database format.
@@ -1211,17 +1244,24 @@ class FixacarApp:
                         maestro_matches_found += 1
 
                     if make_match and year_match and series_match:
-                        # Check for exact description match (try original first, then expanded)
-                        desc_match_orig = maestro_desc == normalized_original.lower()
-                        desc_match_exp = maestro_desc == normalized_expanded.lower()
+                        # Apply unified preprocessing for exact description matching
+                        preprocessed_maestro_desc = self.unified_text_preprocessing(maestro_desc)
+                        preprocessed_original = self.unified_text_preprocessing(original_desc)
+                        preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
+
+                        # Check for exact description match after unified preprocessing
+                        desc_match_orig = preprocessed_maestro_desc == preprocessed_original
+                        desc_match_exp = preprocessed_maestro_desc == preprocessed_expanded
                         desc_match = desc_match_orig or desc_match_exp
 
                         if desc_match:
                             sku = maestro_entry.get('Confirmed_SKU')
                             if sku and sku.strip():
                                 suggestions = self._aggregate_sku_suggestions(
-                                    suggestions, sku, 1.0, "Maestro (Exact)")
-                                print(f"    ✅ Found in Maestro (Exact 4-param): {sku} (Conf: 1.0)")
+                                    suggestions, sku, 1.0, "Maestro (Unified Exact)")
+                                print(f"    ✅ Found in Maestro (Unified Exact 4-param): {sku} (Conf: 1.0)")
+                                match_type = "original" if desc_match_orig else "expanded"
+                                print(f"      Matched via {match_type}: '{preprocessed_maestro_desc}'")
 
                 # Second pass: Fuzzy description matching for same Make, Year, Series
                 if not suggestions:  # Only do fuzzy if no exact matches found
@@ -1241,38 +1281,52 @@ class FixacarApp:
                                 matching_entries.append(maestro_entry)
 
                         if matching_entries:
-                            # Extract descriptions for fuzzy matching
-                            candidate_descriptions = [
-                                str(entry.get('Normalized_Description_Input', '')).lower()
-                                for entry in matching_entries
-                            ]
+                            print(f"    🔄 Applying unified preprocessing for Maestro fuzzy matching...")
+
+                            # Apply unified preprocessing to input descriptions
+                            preprocessed_original = self.unified_text_preprocessing(original_desc)
+                            preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
+
+                            # Apply unified preprocessing to candidate descriptions and create mapping
+                            candidate_descriptions = []
+                            desc_to_entry_map = {}
+
+                            for entry in matching_entries:
+                                raw_desc = str(entry.get('Normalized_Description_Input', ''))
+                                preprocessed_desc = self.unified_text_preprocessing(raw_desc)
+                                candidate_descriptions.append(preprocessed_desc)
+                                desc_to_entry_map[preprocessed_desc] = entry
+
+                            print(f"    🔍 Comparing preprocessed input: '{preprocessed_original}' vs candidates")
 
                             # Find best fuzzy match (try original first, then expanded)
                             match_result = find_best_match(
-                                normalized_original.lower(), candidate_descriptions, threshold=0.8)
+                                preprocessed_original, candidate_descriptions, threshold=0.8)
 
                             # If no good match with original, try expanded
                             if not match_result or match_result[1] < 0.8:
+                                print(f"    🔍 Trying expanded preprocessed input: '{preprocessed_expanded}'")
                                 match_result_exp = find_best_match(
-                                    normalized_expanded.lower(), candidate_descriptions, threshold=0.7)
+                                    preprocessed_expanded, candidate_descriptions, threshold=0.7)
                                 if match_result_exp and (not match_result or match_result_exp[1] > match_result[1]):
                                     match_result = match_result_exp
 
                             if match_result:
                                 best_match_desc, similarity = match_result
+                                print(f"    ✅ Best match found: '{best_match_desc}' (Similarity: {similarity:.3f})")
 
-                                # Find the entry with this description
-                                for entry in matching_entries:
-                                    entry_desc = str(entry.get('Normalized_Description_Input', '')).lower()
-                                    if entry_desc == best_match_desc:
-                                        sku = entry.get('Confirmed_SKU')
-                                        if sku and sku.strip():
-                                            # Confidence based on similarity (0.8-0.95 range)
-                                            confidence = round(0.7 + 0.25 * similarity, 3)
-                                            suggestions = self._aggregate_sku_suggestions(
-                                                suggestions, sku, confidence, f"Maestro (Fuzzy: {similarity:.2f})")
-                                            print(f"    ✅ Found in Maestro (Fuzzy): {sku} (Sim: {similarity:.2f}, Conf: {confidence})")
-                                        break
+                                # Find the entry with this preprocessed description
+                                if best_match_desc in desc_to_entry_map:
+                                    entry = desc_to_entry_map[best_match_desc]
+                                    sku = entry.get('Confirmed_SKU')
+                                    if sku and sku.strip():
+                                        # Higher confidence for unified preprocessing matches
+                                        confidence = round(0.8 + 0.2 * similarity, 3)
+                                        suggestions = self._aggregate_sku_suggestions(
+                                            suggestions, sku, confidence, f"Maestro (Unified Fuzzy: {similarity:.2f})")
+                                        print(f"    ✅ Found in Maestro (Unified Fuzzy): {sku} (Sim: {similarity:.2f}, Conf: {confidence})")
+                            else:
+                                print(f"    ❌ No suitable fuzzy match found in Maestro after unified preprocessing")
                     except ImportError:
                         print("    Fuzzy matching not available for Maestro search")
 
@@ -1371,26 +1425,37 @@ class FixacarApp:
                             """, (vin_make, vin_year, vin_series))
                             all_results = cursor.fetchall()
 
-                            # Apply fuzzy matching to descriptions (try original first, then expanded)
+                            print(f"    🔄 Applying unified preprocessing for Database fuzzy description matching...")
+
+                            # Apply unified preprocessing to input descriptions
+                            preprocessed_original = self.unified_text_preprocessing(original_desc)
+                            preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
+
+                            # Apply fuzzy matching with unified preprocessing
                             for sku, db_desc, frequency in all_results:
                                 if sku and sku.strip() and db_desc:
-                                    # Try original normalized description first
-                                    similarity_orig = self._calculate_description_similarity(normalized_original, db_desc)
-                                    similarity_exp = self._calculate_description_similarity(normalized_expanded, db_desc)
+                                    # Apply unified preprocessing to database description
+                                    preprocessed_db_desc = self.unified_text_preprocessing(db_desc)
 
-                                    # Use the better similarity score
+                                    # Calculate similarity with preprocessed descriptions
+                                    similarity_orig = self._calculate_description_similarity(preprocessed_original, preprocessed_db_desc)
+                                    similarity_exp = self._calculate_description_similarity(preprocessed_expanded, preprocessed_db_desc)
+
+                                    # Use the better similarity score with higher confidence for unified preprocessing
                                     if similarity_orig >= similarity_exp and similarity_orig >= 0.7:
-                                        confidence = round(0.3 + 0.2 * similarity_orig, 3)
+                                        confidence = round(0.4 + 0.3 * similarity_orig, 3)  # Higher confidence for unified preprocessing
                                         suggestions = self._aggregate_sku_suggestions(
-                                            suggestions, sku, confidence, f"DB (Fuzzy Desc Original: {similarity_orig:.2f})")
+                                            suggestions, sku, confidence, f"DB (Unified Fuzzy Orig: {similarity_orig:.2f})")
                                         print(
-                                            f"    Found in DB (Fuzzy Desc Original): {sku} (Sim: {similarity_orig:.2f}, Freq: {frequency}, Conf: {confidence})")
+                                            f"    Found in DB (Unified Fuzzy Orig): {sku} (Sim: {similarity_orig:.2f}, Freq: {frequency}, Conf: {confidence})")
+                                        print(f"      Input: '{preprocessed_original}' vs DB: '{preprocessed_db_desc}'")
                                     elif similarity_exp >= 0.7:
-                                        confidence = round(0.25 + 0.15 * similarity_exp, 3)  # Slightly lower confidence for expanded
+                                        confidence = round(0.35 + 0.25 * similarity_exp, 3)  # Higher confidence for unified preprocessing
                                         suggestions = self._aggregate_sku_suggestions(
-                                            suggestions, sku, confidence, f"DB (Fuzzy Desc Expanded: {similarity_exp:.2f})")
+                                            suggestions, sku, confidence, f"DB (Unified Fuzzy Exp: {similarity_exp:.2f})")
                                         print(
-                                            f"    Found in DB (Fuzzy Desc Expanded): {sku} (Sim: {similarity_exp:.2f}, Freq: {frequency}, Conf: {confidence})")
+                                            f"    Found in DB (Unified Fuzzy Exp): {sku} (Sim: {similarity_exp:.2f}, Freq: {frequency}, Conf: {confidence})")
+                                        print(f"      Input: '{preprocessed_expanded}' vs DB: '{preprocessed_db_desc}'")
 
                     except Exception as db_err:
                         print(
@@ -1411,25 +1476,34 @@ class FixacarApp:
                         """, (vin_make, vin_year, vin_series))
                         results = cursor.fetchall()
 
-                        # Apply fuzzy description matching (try both original and expanded)
+                        print(f"    🔄 Applying unified preprocessing for 3-param fuzzy matching...")
+
+                        # Apply unified preprocessing to input descriptions
+                        preprocessed_original = self.unified_text_preprocessing(original_desc)
+                        preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
+
+                        # Apply fuzzy description matching with unified preprocessing
                         for sku, db_desc, frequency in results:
                             if sku and sku.strip() and db_desc:
-                                similarity_orig = self._calculate_description_similarity(normalized_original, db_desc)
-                                similarity_exp = self._calculate_description_similarity(normalized_expanded, db_desc)
+                                # Apply unified preprocessing to database description
+                                preprocessed_db_desc = self.unified_text_preprocessing(db_desc)
 
-                                # Use the better similarity score
+                                similarity_orig = self._calculate_description_similarity(preprocessed_original, preprocessed_db_desc)
+                                similarity_exp = self._calculate_description_similarity(preprocessed_expanded, preprocessed_db_desc)
+
+                                # Use the better similarity score with higher confidence for unified preprocessing
                                 if similarity_orig >= similarity_exp and similarity_orig >= 0.6:
-                                    confidence = round(0.2 + 0.2 * similarity_orig, 3)
+                                    confidence = round(0.3 + 0.3 * similarity_orig, 3)  # Higher confidence for unified preprocessing
                                     suggestions = self._aggregate_sku_suggestions(
-                                        suggestions, sku, confidence, f"DB (3-param Fuzzy Orig: {similarity_orig:.2f})")
+                                        suggestions, sku, confidence, f"DB (3-param Unified Orig: {similarity_orig:.2f})")
                                     print(
-                                        f"    Found in DB (3-param Fuzzy Orig): {sku} (Sim: {similarity_orig:.2f}, Freq: {frequency}, Conf: {confidence})")
+                                        f"    Found in DB (3-param Unified Orig): {sku} (Sim: {similarity_orig:.2f}, Freq: {frequency}, Conf: {confidence})")
                                 elif similarity_exp >= 0.6:
-                                    confidence = round(0.15 + 0.15 * similarity_exp, 3)  # Slightly lower for expanded
+                                    confidence = round(0.25 + 0.25 * similarity_exp, 3)  # Higher confidence for unified preprocessing
                                     suggestions = self._aggregate_sku_suggestions(
-                                        suggestions, sku, confidence, f"DB (3-param Fuzzy Exp: {similarity_exp:.2f})")
+                                        suggestions, sku, confidence, f"DB (3-param Unified Exp: {similarity_exp:.2f})")
                                     print(
-                                        f"    Found in DB (3-param Fuzzy Exp): {sku} (Sim: {similarity_exp:.2f}, Freq: {frequency}, Conf: {confidence})")
+                                        f"    Found in DB (3-param Unified Exp): {sku} (Sim: {similarity_exp:.2f}, Freq: {frequency}, Conf: {confidence})")
 
                         # STEP 2: If still no results, try fuzzy series + fuzzy description
                         if not suggestions:
@@ -1444,25 +1518,34 @@ class FixacarApp:
                             """, (vin_make, vin_year, f'%{vin_series}%'))
                             fuzzy_results = cursor.fetchall()
 
-                            # Apply fuzzy description matching with lower threshold (try both original and expanded)
+                            print(f"    🔄 Applying unified preprocessing for fuzzy series+description matching...")
+
+                            # Apply unified preprocessing to input descriptions
+                            preprocessed_original = self.unified_text_preprocessing(original_desc)
+                            preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
+
+                            # Apply fuzzy description matching with unified preprocessing and lower threshold
                             for sku, db_desc, frequency in fuzzy_results:
                                 if sku and sku.strip() and db_desc:
-                                    similarity_orig = self._calculate_description_similarity(normalized_original, db_desc)
-                                    similarity_exp = self._calculate_description_similarity(normalized_expanded, db_desc)
+                                    # Apply unified preprocessing to database description
+                                    preprocessed_db_desc = self.unified_text_preprocessing(db_desc)
 
-                                    # Use the better similarity score
+                                    similarity_orig = self._calculate_description_similarity(preprocessed_original, preprocessed_db_desc)
+                                    similarity_exp = self._calculate_description_similarity(preprocessed_expanded, preprocessed_db_desc)
+
+                                    # Use the better similarity score with higher confidence for unified preprocessing
                                     if similarity_orig >= similarity_exp and similarity_orig >= 0.5:
-                                        confidence = round(0.1 + 0.2 * similarity_orig, 3)
+                                        confidence = round(0.2 + 0.3 * similarity_orig, 3)  # Higher confidence for unified preprocessing
                                         suggestions = self._aggregate_sku_suggestions(
-                                            suggestions, sku, confidence, f"DB (Fuzzy Series+Desc Orig: {similarity_orig:.2f})")
+                                            suggestions, sku, confidence, f"DB (Unified Fuzzy Series+Desc Orig: {similarity_orig:.2f})")
                                         print(
-                                            f"    Found in DB (Fuzzy Series+Desc Orig): {sku} (Sim: {similarity_orig:.2f}, Freq: {frequency}, Conf: {confidence})")
+                                            f"    Found in DB (Unified Fuzzy Series+Desc Orig): {sku} (Sim: {similarity_orig:.2f}, Freq: {frequency}, Conf: {confidence})")
                                     elif similarity_exp >= 0.5:
-                                        confidence = round(0.05 + 0.15 * similarity_exp, 3)  # Even lower for expanded
+                                        confidence = round(0.15 + 0.25 * similarity_exp, 3)  # Higher confidence for unified preprocessing
                                         suggestions = self._aggregate_sku_suggestions(
-                                            suggestions, sku, confidence, f"DB (Fuzzy Series+Desc Exp: {similarity_exp:.2f})")
+                                            suggestions, sku, confidence, f"DB (Unified Fuzzy Series+Desc Exp: {similarity_exp:.2f})")
                                         print(
-                                            f"    Found in DB (Fuzzy Series+Desc Exp): {sku} (Sim: {similarity_exp:.2f}, Freq: {frequency}, Conf: {confidence})")
+                                            f"    Found in DB (Unified Fuzzy Series+Desc Exp): {sku} (Sim: {similarity_exp:.2f}, Freq: {frequency}, Conf: {confidence})")
 
                     except Exception as db_err:
                         print(
@@ -1487,25 +1570,33 @@ class FixacarApp:
                     vin_series_str_for_nn = "N/A"
 
                 if vin_make != 'N/A' and vin_year_str_scalar != 'N/A' and vin_series_str_for_nn != 'N/A':
-                    print(
-                        f"  Attempting SKU NN prediction for: Make='{vin_make}', Year='{vin_year_str_scalar}', Series='{vin_series_str_for_nn}', Original='{normalized_original}', Expanded='{normalized_expanded}'")
+                    print(f"  🔄 Applying unified preprocessing for Neural Network input...")
 
-                    # Try original description first
+                    # Apply unified preprocessing to input descriptions for Neural Network
+                    preprocessed_original = self.unified_text_preprocessing(original_desc)
+                    preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
+
+                    print(
+                        f"  Attempting SKU NN prediction for: Make='{vin_make}', Year='{vin_year_str_scalar}', Series='{vin_series_str_for_nn}'")
+                    print(f"  NN Input (preprocessed original): '{preprocessed_original}'")
+                    print(f"  NN Input (preprocessed expanded): '{preprocessed_expanded}'")
+
+                    # Try preprocessed original description first
                     sku_nn_output = self._get_sku_nn_prediction(
                         make=vin_make,
                         model_year=vin_year_str_scalar,
                         series=vin_series_str_for_nn,
-                        description=normalized_original
+                        description=preprocessed_original
                     )
 
-                    # If no good result, try expanded description
+                    # If no good result, try preprocessed expanded description
                     if not sku_nn_output or (sku_nn_output and sku_nn_output[1] < 0.3):
-                        print(f"  Trying NN prediction with expanded description...")
+                        print(f"  Trying NN prediction with preprocessed expanded description...")
                         sku_nn_output_expanded = self._get_sku_nn_prediction(
                             make=vin_make,
                             model_year=vin_year_str_scalar,
                             series=vin_series_str_for_nn,
-                            description=normalized_expanded
+                            description=preprocessed_expanded
                         )
                         # Use expanded result if it's better
                         if sku_nn_output_expanded and (not sku_nn_output or sku_nn_output_expanded[1] > sku_nn_output[1]):
