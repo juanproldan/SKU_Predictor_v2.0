@@ -227,7 +227,11 @@ class FixacarApp:
     def expand_synonyms(self, text: str) -> str:
         """
         Global synonym expansion function that preprocesses text by replacing
-        synonyms with their canonical forms before any prediction method.
+        industry-specific synonyms with their canonical forms before any prediction method.
+
+        This function ONLY handles Equivalencias.xlsx synonyms (industry-specific terms).
+        Linguistic variations (abbreviations, gender, plurals) are handled automatically
+        by the normalize_text function.
 
         This ensures ALL prediction sources (Maestro, Database, Neural Network)
         receive the same normalized input after synonym expansion.
@@ -235,24 +239,233 @@ class FixacarApp:
         if not text or not synonym_expansion_map_global:
             return text
 
-        # Split text into words
-        words = text.split()
+        # First normalize text (this handles abbreviations, gender, plurals automatically)
+        normalized_text = normalize_text(text, expand_linguistic_variations=True)
+        words = normalized_text.split()
         expanded_words = []
 
         for word in words:
-            # Normalize the word first
-            normalized_word = normalize_text(word)
-
-            # Check if this word has a canonical form
-            if normalized_word in synonym_expansion_map_global:
-                canonical_form = synonym_expansion_map_global[normalized_word]
+            # Check if this word has an industry-specific synonym in Equivalencias (CASE-INSENSITIVE)
+            word_lower = word.lower()
+            if word_lower in synonym_expansion_map_global:
+                canonical_form = synonym_expansion_map_global[word_lower]
                 expanded_words.append(canonical_form)
-                print(f"    Synonym expansion: '{word}' -> '{canonical_form}'")
+                print(f"    Industry synonym: '{word}' -> '{canonical_form}'")
             else:
-                expanded_words.append(normalized_word)
+                expanded_words.append(word)
 
         expanded_text = ' '.join(expanded_words)
         return expanded_text
+
+    def create_abbreviated_version(self, description: str) -> str:
+        """
+        Create abbreviated version of description to match database format.
+        Database uses heavily abbreviated forms like 'paragolpes del' instead of 'paragolpes delantero'.
+
+        Based on database analysis, common patterns are:
+        - 'paragolpes del' (25 records)
+        - 'farola d' (18 records)
+        - 'farola i' (15 records)
+        - 'guardafango deld' (13 records)
+        - 'absorbimpacto del' (11 records)
+        """
+        desc = description.lower()
+
+        # Apply specific transformations based on database patterns
+        # Handle compound terms first
+        if 'absorbedor de impactos' in desc:
+            desc = desc.replace('absorbedor de impactos', 'absorbimpacto')
+
+        if 'electroventilador' in desc:
+            desc = desc.replace('electroventilador', 'electrovent')
+
+        # Handle luz -> farola transformation for lights
+        if 'luz antiniebla' in desc:
+            desc = desc.replace('luz antiniebla', 'farola')
+        elif 'luz' in desc:
+            desc = desc.replace('luz', 'farola')
+
+        # Common abbreviations found in database
+        abbreviations = {
+            'delantero': 'del',
+            'delantera': 'del',
+            'trasero': 'tra',
+            'trasera': 'tra',
+            'izquierdo': 'i',
+            'izquierda': 'i',
+            'derecho': 'd',
+            'derecha': 'd',
+            'superior': 'sup',
+            'inferior': 'inf',
+            'anterior': 'ant',
+            'posterior': 'post'
+        }
+
+        # Apply abbreviations
+        for full_form, abbrev in abbreviations.items():
+            desc = desc.replace(full_form, abbrev)
+
+        # Remove common words that might not be in database (CASE-INSENSITIVE)
+        remove_words = ['de', 'la', 'el', 'los', 'las', 'antiniebla']
+        words = desc.split()
+        words = [w for w in words if w.lower() not in remove_words]
+
+        return ' '.join(words)
+
+    def _calculate_description_similarity(self, query_desc: str, db_desc: str) -> float:
+        """
+        Calculate similarity between query description and database description.
+        Handles gender variations, abbreviations, and partial matches.
+
+        Examples:
+        - 'farola derecho' vs 'farola derecha' → high similarity (gender variation)
+        - 'farola der' vs 'farola derecha' → high similarity (abbreviation)
+        - 'farola dere' vs 'farola derecha' → high similarity (partial)
+
+        CASE-INSENSITIVE: All comparisons are done in lowercase.
+        """
+        if not query_desc or not db_desc:
+            return 0.0
+
+        # Convert to lowercase for case-insensitive comparison
+        query_desc = query_desc.lower()
+        db_desc = db_desc.lower()
+
+        # Exact match
+        if query_desc == db_desc:
+            return 1.0
+
+        # Split into words for detailed comparison
+        query_words = query_desc.split()
+        db_words = db_desc.split()
+
+        # If different number of words, use sequence matching
+        if len(query_words) != len(db_words):
+            from difflib import SequenceMatcher
+            return SequenceMatcher(None, query_desc, db_desc).ratio()
+
+        # Word-by-word comparison with special handling
+        word_similarities = []
+        for q_word, db_word in zip(query_words, db_words):
+            word_sim = self._calculate_word_similarity(q_word, db_word)
+            word_similarities.append(word_sim)
+
+        # Average similarity across all words
+        return sum(word_similarities) / len(word_similarities) if word_similarities else 0.0
+
+    def _calculate_word_similarity(self, word1: str, word2: str) -> float:
+        """
+        Calculate similarity between two words with special handling for:
+        - Gender variations (derecho/derecha)
+        - Abbreviations (der/derecha, izq/izquierda)
+        - Partial matches (dere/derecha)
+        - Plurals and singulars (farola/farolas, paragolpe/paragolpes)
+
+        CASE-INSENSITIVE: All comparisons are done in lowercase.
+        """
+        if not word1 or not word2:
+            return 0.0
+
+        # Convert to lowercase for case-insensitive comparison
+        word1 = word1.lower()
+        word2 = word2.lower()
+
+        # Exact match
+        if word1 == word2:
+            return 1.0
+
+        # Import the gender variant checker
+        from utils.text_utils import are_gender_variants
+
+        # Check for exact gender variants first (highest priority)
+        if are_gender_variants(word1, word2):
+            return 1.0  # Perfect match for gender variants
+
+        # Handle common abbreviations and their full forms
+        abbreviation_map = {
+            'der': ['derecho', 'derecha'],
+            'izq': ['izquierdo', 'izquierda'],
+            'iz': ['izquierdo', 'izquierda'],
+            'i': ['izquierdo', 'izquierda'],
+            'del': ['delantero', 'delantera'],
+            'delan': ['delantero', 'delantera'],
+            'tra': ['trasero', 'trasera'],
+            'tras': ['trasero', 'trasera'],
+            't': ['trasero', 'trasera'],  # Single letter abbreviation
+            'd': ['derecho', 'derecha', 'delantero', 'delantera'],  # Ambiguous - could be either
+            'ant': ['anterior'],
+            'post': ['posterior'],
+            'sup': ['superior'],
+            'inf': ['inferior'],
+        }
+
+        # Check if one word is an abbreviation of the other
+        for abbrev, full_forms in abbreviation_map.items():
+            if word1 == abbrev and word2 in full_forms:
+                return 0.95  # High similarity for known abbreviations
+            if word2 == abbrev and word1 in full_forms:
+                return 0.95
+
+        # Handle gender variations with pattern matching (fallback for unknown words)
+        if len(word1) > 2 and len(word2) > 2:
+            # Check if words are identical except for last character (gender)
+            if word1[:-1] == word2[:-1] and word1[-1] in 'oa' and word2[-1] in 'oa':
+                return 0.95  # High similarity for gender variations
+
+        # Handle plurals and singulars
+        plural_similarity = self._check_plural_singular_similarity(word1, word2)
+        if plural_similarity > 0:
+            return plural_similarity
+
+        # Handle partial matches (one word is a prefix of the other)
+        if word1.startswith(word2) or word2.startswith(word1):
+            shorter = min(word1, word2, key=len)
+            longer = max(word1, word2, key=len)
+            if len(shorter) >= 3:  # Minimum 3 characters for partial match
+                return 0.8 + 0.1 * (len(shorter) / len(longer))
+
+        # Use sequence matching for other cases
+        from difflib import SequenceMatcher
+        return SequenceMatcher(None, word1, word2).ratio()
+
+    def _check_plural_singular_similarity(self, word1: str, word2: str) -> float:
+        """
+        Check if two words are plural/singular variations of each other.
+        Spanish plural rules:
+        - Add 's' to words ending in vowel: farola → farolas
+        - Add 'es' to words ending in consonant: paragolpe → paragolpes
+        - Some irregular plurals
+        """
+        if len(word1) < 3 or len(word2) < 3:
+            return 0.0
+
+        # Check if one is plural of the other
+        longer = max(word1, word2, key=len)
+        shorter = min(word1, word2, key=len)
+
+        # Rule 1: Add 's' (farola → farolas)
+        if longer == shorter + 's':
+            return 0.92
+
+        # Rule 2: Add 'es' (paragolpe → paragolpes)
+        if longer == shorter + 'es':
+            return 0.92
+
+        # Rule 3: Some words change ending (e.g., luz → luces)
+        # Check if removing 'es' and adding common singular endings works
+        if longer.endswith('es') and len(longer) > 3:
+            stem = longer[:-2]  # Remove 'es'
+            # Try common singular endings
+            singular_candidates = [stem, stem + 'z', stem + 'x']
+            if shorter in singular_candidates:
+                return 0.92
+
+        # Rule 4: Words ending in 'z' become 'ces' (luz → luces)
+        if longer.endswith('ces') and shorter.endswith('z'):
+            if longer[:-3] == shorter[:-1]:  # Compare stems
+                return 0.92
+
+        return 0.0
 
     def load_equivalencias_data(self, file_path: str) -> dict:
         """
@@ -280,13 +493,15 @@ class FixacarApp:
                         normalized_term = normalize_text(str(term))
                         if normalized_term:
                             row_terms.append(normalized_term)
-                            equivalencias_map[normalized_term] = equivalencia_row_id
+                            # Store with lowercase key for case-insensitive lookup
+                            equivalencias_map[normalized_term.lower()] = equivalencia_row_id
 
                 # Second pass: create synonym mappings (all terms map to the first/canonical term)
+                # Ensure case-insensitive storage by using lowercase keys
                 if row_terms:
                     canonical_term = row_terms[0]  # Use first term as canonical
                     for term in row_terms:
-                        synonym_expansion_map[term] = canonical_term
+                        synonym_expansion_map[term.lower()] = canonical_term
 
             # Store the synonym expansion map globally for use in preprocessing
             global synonym_expansion_map_global
@@ -834,25 +1049,30 @@ class FixacarApp:
             for original_desc in original_descriptions:
                 print(f"  Processing: '{original_desc}'")
 
-                # STEP 1: Apply global synonym expansion FIRST
-                # This ensures ALL prediction methods get the same canonical input
+                # STEP 1: Normalize the original description (without synonym expansion)
+                normalized_original = normalize_text(original_desc)
+                print(f"  Normalized original: '{normalized_original}'")
+
+                # STEP 2: Apply synonym expansion for fallback searches
                 expanded_desc = self.expand_synonyms(original_desc)
                 print(f"  After synonym expansion: '{expanded_desc}'")
+                normalized_expanded = normalize_text(expanded_desc)
+                print(f"  Normalized expanded: '{normalized_expanded}'")
 
-                # STEP 2: Normalize the expanded description
-                normalized_desc = normalize_text(expanded_desc)
-                print(f"  After normalization: '{normalized_desc}'")
+                # STEP 3: Create abbreviated version to match database format
+                abbreviated_desc = self.create_abbreviated_version(normalized_original)
+                print(f"  Abbreviated version: '{abbreviated_desc}'")
 
-                # STEP 3: Look up equivalencia ID using the final normalized form
-                equivalencia_id = equivalencias_map_global.get(normalized_desc)
+                # STEP 3: Look up equivalencia ID using the expanded form (CASE-INSENSITIVE)
+                equivalencia_id = equivalencias_map_global.get(normalized_expanded.lower())
 
                 # STEP 4: If no direct match, try fuzzy matching as fallback
                 if equivalencia_id is None:
                     fuzzy_normalized_desc = normalize_text(expanded_desc, use_fuzzy=True)
-                    equivalencia_id = equivalencias_map_global.get(fuzzy_normalized_desc)
+                    equivalencia_id = equivalencias_map_global.get(fuzzy_normalized_desc.lower())
 
                     if equivalencia_id is not None:
-                        normalized_desc = fuzzy_normalized_desc
+                        normalized_expanded = fuzzy_normalized_desc
                         print(f"  Found via fuzzy normalization: EqID {equivalencia_id}")
 
                     # Final fallback: try fuzzy matching against all equivalencias terms
@@ -861,23 +1081,25 @@ class FixacarApp:
                         try:
                             from utils.fuzzy_matcher import find_best_match
                             match_result = find_best_match(
-                                normalized_desc, normalized_terms, threshold=0.8)
+                                normalized_expanded, normalized_terms, threshold=0.8)
 
                             if match_result:
                                 best_match, similarity = match_result
-                                equivalencia_id = equivalencias_map_global.get(best_match)
-                                normalized_desc = best_match
+                                equivalencia_id = equivalencias_map_global.get(best_match.lower())
+                                normalized_expanded = best_match
                                 print(f"  Found via fuzzy match: '{best_match}' (similarity: {similarity:.2f}, EqID: {equivalencia_id})")
                         except ImportError:
                             pass
 
                 self.processed_parts.append({
                     "original": original_desc,
-                    "expanded": expanded_desc,  # New: store the synonym-expanded form
-                    "normalized": normalized_desc,
+                    "normalized_original": normalized_original,  # Store original normalized form
+                    "expanded": expanded_desc,  # Store the synonym-expanded form
+                    "normalized_expanded": normalized_expanded,  # Store expanded normalized form
+                    "abbreviated": abbreviated_desc,  # Store abbreviated form for database matching
                     "equivalencia_id": equivalencia_id
                 })
-                print(f"  Final result: '{original_desc}' -> Expanded: '{expanded_desc}' -> Normalized: '{normalized_desc}', EqID: {equivalencia_id}")
+                print(f"  Final result: '{original_desc}' -> Original normalized: '{normalized_original}' -> Abbreviated: '{abbreviated_desc}' -> Expanded: '{expanded_desc}' -> Expanded normalized: '{normalized_expanded}', EqID: {equivalencia_id}")
         else:
             print("No part descriptions entered.")
             self.processed_parts = []
@@ -901,22 +1123,39 @@ class FixacarApp:
 
             for part_info in self.processed_parts:
                 original_desc = part_info["original"]
-                expanded_desc = part_info["expanded"]  # New: use expanded form
-                normalized_desc = part_info["normalized"]
+                normalized_original = part_info["normalized_original"]
+                expanded_desc = part_info["expanded"]
+                normalized_expanded = part_info["normalized_expanded"]
+                abbreviated_desc = part_info["abbreviated"]
                 eq_id = part_info["equivalencia_id"]
                 print(
-                    f"\nSearching for: '{original_desc}' (Expanded: '{expanded_desc}', Normalized: '{normalized_desc}', EqID: {eq_id})")
+                    f"\nSearching for: '{original_desc}' (Original normalized: '{normalized_original}', Abbreviated: '{abbreviated_desc}', Expanded: '{expanded_desc}', Expanded normalized: '{normalized_expanded}', EqID: {eq_id})")
 
                 suggestions = {}
 
                 # Use self.vehicle_details which is now PREDICTED
                 predicted_make_val = self.vehicle_details.get('Make', 'N/A')
                 if isinstance(predicted_make_val, np.ndarray):
-                    vin_make = str(predicted_make_val.item()).upper(
-                    ) if predicted_make_val.size > 0 else 'N/A'
+                    vin_make_raw = str(predicted_make_val.item()) if predicted_make_val.size > 0 else 'N/A'
                 else:
-                    vin_make = str(predicted_make_val).upper() if pd.notna(
-                        predicted_make_val) else 'N/A'
+                    vin_make_raw = str(predicted_make_val) if pd.notna(predicted_make_val) else 'N/A'
+
+                # Fix make case - database AND Maestro use proper case, not uppercase
+                # Based on database analysis: 'Renault', 'Chevrolet', 'Ford', 'Mazda', etc.
+                make_case_map = {
+                    'RENAULT': 'Renault',
+                    'CHEVROLET': 'Chevrolet',
+                    'MAZDA': 'Mazda',
+                    'FORD': 'Ford',
+                    'HYUNDAI': 'Hyundai',
+                    'TOYOTA': 'Toyota',
+                    'NISSAN': 'Nissan',
+                    'KIA': 'Kia',
+                    'VOLKSWAGEN': 'Volkswagen'
+                }
+                vin_make = make_case_map.get(vin_make_raw.upper(), vin_make_raw)
+                print(f"  🔧 Make case correction: '{vin_make_raw}' -> '{vin_make}'")
+                print(f"  Make case correction: '{vin_make_raw}' -> '{vin_make}'")
 
                 # Model is likely N/A from predictor
                 vin_model = self.vehicle_details.get('Model', 'N/A')
@@ -946,21 +1185,36 @@ class FixacarApp:
                 else:
                     vin_series = str(predicted_series_val) if pd.notna(predicted_series_val) else 'N/A'
 
+                # Debug: Show what we're searching for
+                print(f"    🔍 Searching for: Make='{vin_make}', Year='{vin_year_str_scalar}', Series='{vin_series}'")
+                print(f"    🔍 Description (original): '{normalized_original}'")
+                print(f"    🔍 Description (expanded): '{normalized_expanded}'")
+
                 # First pass: Exact matches on Make, Year, Series + exact description
+                maestro_matches_found = 0
                 for maestro_entry in maestro_data_global:
-                    maestro_make = str(maestro_entry.get('VIN_Make', '')).upper()
+                    maestro_make = str(maestro_entry.get('VIN_Make', ''))
                     maestro_year = str(maestro_entry.get('VIN_Year_Min', ''))
                     maestro_series = str(maestro_entry.get('VIN_Series_Trim', ''))
                     maestro_desc = str(maestro_entry.get('Normalized_Description_Input', '')).lower()
 
-                    # Check 3-parameter exact match (Make, Year, Series)
-                    make_match = maestro_make == vin_make
+                    # Check 3-parameter exact match (Make, Year, Series) - CASE INSENSITIVE
+                    make_match = maestro_make.upper() == vin_make.upper()
                     year_match = maestro_year == vin_year_str_scalar
                     series_match = maestro_series.upper() == vin_series.upper()
 
+                    # Debug: Show first few comparisons
+                    if maestro_matches_found < 3:
+                        print(f"    📋 Maestro entry: Make='{maestro_make.upper()}' vs '{vin_make.upper()}' ({make_match})")
+                        print(f"    📋 Maestro entry: Year='{maestro_year}' vs '{vin_year_str_scalar}' ({year_match})")
+                        print(f"    📋 Maestro entry: Series='{maestro_series.upper()}' vs '{vin_series.upper()}' ({series_match})")
+                        maestro_matches_found += 1
+
                     if make_match and year_match and series_match:
-                        # Check for exact description match
-                        desc_match = maestro_desc == normalized_desc.lower()
+                        # Check for exact description match (try original first, then expanded)
+                        desc_match_orig = maestro_desc == normalized_original.lower()
+                        desc_match_exp = maestro_desc == normalized_expanded.lower()
+                        desc_match = desc_match_orig or desc_match_exp
 
                         if desc_match:
                             sku = maestro_entry.get('Confirmed_SKU')
@@ -977,11 +1231,11 @@ class FixacarApp:
                         # Get all descriptions from matching Make, Year, Series entries
                         matching_entries = []
                         for maestro_entry in maestro_data_global:
-                            maestro_make = str(maestro_entry.get('VIN_Make', '')).upper()
+                            maestro_make = str(maestro_entry.get('VIN_Make', ''))
                             maestro_year = str(maestro_entry.get('VIN_Year_Min', ''))
                             maestro_series = str(maestro_entry.get('VIN_Series_Trim', ''))
 
-                            if (maestro_make == vin_make and
+                            if (maestro_make.upper() == vin_make.upper() and
                                 maestro_year == vin_year_str_scalar and
                                 maestro_series.upper() == vin_series.upper()):
                                 matching_entries.append(maestro_entry)
@@ -993,9 +1247,16 @@ class FixacarApp:
                                 for entry in matching_entries
                             ]
 
-                            # Find best fuzzy match
+                            # Find best fuzzy match (try original first, then expanded)
                             match_result = find_best_match(
-                                normalized_desc.lower(), candidate_descriptions, threshold=0.8)
+                                normalized_original.lower(), candidate_descriptions, threshold=0.8)
+
+                            # If no good match with original, try expanded
+                            if not match_result or match_result[1] < 0.8:
+                                match_result_exp = find_best_match(
+                                    normalized_expanded.lower(), candidate_descriptions, threshold=0.7)
+                                if match_result_exp and (not match_result or match_result_exp[1] > match_result[1]):
+                                    match_result = match_result_exp
 
                             if match_result:
                                 best_match_desc, similarity = match_result
@@ -1020,13 +1281,13 @@ class FixacarApp:
                     print(
                         f"  Searching SQLite DB (Make: {vin_make}, Year: {vin_year}, Series: {vin_series})...")
                     try:
-                        # Query with Make, Year, Series, and normalized description
+                        # STEP 1: Try exact series and exact description match (abbreviated first)
                         cursor.execute("""
                             SELECT sku, COUNT(*) as frequency
                             FROM historical_parts
                             WHERE vin_make = ? AND vin_year = ? AND vin_series = ? AND normalized_description = ?
                             GROUP BY sku
-                        """, (vin_make, vin_year, vin_series, normalized_desc))
+                        """, (vin_make, vin_year, vin_series, abbreviated_desc))
                         results = cursor.fetchall()
                         total_matches = sum(row[1] for row in results)
                         for sku, frequency in results:
@@ -1034,9 +1295,103 @@ class FixacarApp:
                                 confidence = round(
                                     0.5 + 0.4 * (frequency / total_matches), 3) if total_matches > 0 else 0.5
                                 suggestions = self._aggregate_sku_suggestions(
-                                    suggestions, sku, confidence, f"DB (4-param)")
+                                    suggestions, sku, confidence, f"DB (4-param Exact)")
                                 print(
-                                    f"    Found in DB (4-param): {sku} (Freq: {frequency}, Conf: {confidence})")
+                                    f"    Found in DB (4-param Exact): {sku} (Freq: {frequency}, Conf: {confidence})")
+
+                        # STEP 2: If no exact match, try fuzzy series matching with abbreviated description
+                        if not suggestions:
+                            print("    No exact series match, trying fuzzy series matching with abbreviated description...")
+                            cursor.execute("""
+                                SELECT sku, COUNT(*) as frequency
+                                FROM historical_parts
+                                WHERE vin_make = ? AND vin_year = ? AND vin_series LIKE ? AND normalized_description = ?
+                                GROUP BY sku
+                            """, (vin_make, vin_year, f'%{vin_series}%', abbreviated_desc))
+                            results = cursor.fetchall()
+                            total_matches = sum(row[1] for row in results)
+                            for sku, frequency in results:
+                                if sku and sku.strip():
+                                    confidence = round(
+                                        0.4 + 0.3 * (frequency / total_matches), 3) if total_matches > 0 else 0.4
+                                    suggestions = self._aggregate_sku_suggestions(
+                                        suggestions, sku, confidence, f"DB (Fuzzy Series + Abbreviated)")
+                                    print(
+                                        f"    Found in DB (Fuzzy Series + Abbreviated): {sku} (Freq: {frequency}, Conf: {confidence})")
+
+                        # STEP 2b: If still no match, try fuzzy series matching with original description
+                        if not suggestions:
+                            print("    No match with abbreviated, trying fuzzy series matching with original description...")
+                            cursor.execute("""
+                                SELECT sku, COUNT(*) as frequency
+                                FROM historical_parts
+                                WHERE vin_make = ? AND vin_year = ? AND vin_series LIKE ? AND normalized_description = ?
+                                GROUP BY sku
+                            """, (vin_make, vin_year, f'%{vin_series}%', normalized_original))
+                            results = cursor.fetchall()
+                            total_matches = sum(row[1] for row in results)
+                            for sku, frequency in results:
+                                if sku and sku.strip():
+                                    confidence = round(
+                                        0.35 + 0.25 * (frequency / total_matches), 3) if total_matches > 0 else 0.35
+                                    suggestions = self._aggregate_sku_suggestions(
+                                        suggestions, sku, confidence, f"DB (Fuzzy Series + Original)")
+                                    print(
+                                        f"    Found in DB (Fuzzy Series + Original): {sku} (Freq: {frequency}, Conf: {confidence})")
+
+                        # STEP 2c: If still no match, try fuzzy series matching with expanded description
+                        if not suggestions:
+                            print("    No match with original description, trying fuzzy series matching with expanded description...")
+                            cursor.execute("""
+                                SELECT sku, COUNT(*) as frequency
+                                FROM historical_parts
+                                WHERE vin_make = ? AND vin_year = ? AND vin_series LIKE ? AND normalized_description = ?
+                                GROUP BY sku
+                            """, (vin_make, vin_year, f'%{vin_series}%', normalized_expanded))
+                            results = cursor.fetchall()
+                            total_matches = sum(row[1] for row in results)
+                            for sku, frequency in results:
+                                if sku and sku.strip():
+                                    confidence = round(
+                                        0.35 + 0.25 * (frequency / total_matches), 3) if total_matches > 0 else 0.35
+                                    suggestions = self._aggregate_sku_suggestions(
+                                        suggestions, sku, confidence, f"DB (Fuzzy Series + Expanded)")
+                                    print(
+                                        f"    Found in DB (Fuzzy Series + Expanded): {sku} (Freq: {frequency}, Conf: {confidence})")
+
+                        # STEP 3: If still no match, try fuzzy description matching with exact series
+                        if not suggestions:
+                            print("    No exact description match, trying fuzzy description matching...")
+                            # Get all descriptions for this make/year/series combination
+                            cursor.execute("""
+                                SELECT sku, normalized_description, COUNT(*) as frequency
+                                FROM historical_parts
+                                WHERE vin_make = ? AND vin_year = ? AND vin_series = ?
+                                GROUP BY sku, normalized_description
+                            """, (vin_make, vin_year, vin_series))
+                            all_results = cursor.fetchall()
+
+                            # Apply fuzzy matching to descriptions (try original first, then expanded)
+                            for sku, db_desc, frequency in all_results:
+                                if sku and sku.strip() and db_desc:
+                                    # Try original normalized description first
+                                    similarity_orig = self._calculate_description_similarity(normalized_original, db_desc)
+                                    similarity_exp = self._calculate_description_similarity(normalized_expanded, db_desc)
+
+                                    # Use the better similarity score
+                                    if similarity_orig >= similarity_exp and similarity_orig >= 0.7:
+                                        confidence = round(0.3 + 0.2 * similarity_orig, 3)
+                                        suggestions = self._aggregate_sku_suggestions(
+                                            suggestions, sku, confidence, f"DB (Fuzzy Desc Original: {similarity_orig:.2f})")
+                                        print(
+                                            f"    Found in DB (Fuzzy Desc Original): {sku} (Sim: {similarity_orig:.2f}, Freq: {frequency}, Conf: {confidence})")
+                                    elif similarity_exp >= 0.7:
+                                        confidence = round(0.25 + 0.15 * similarity_exp, 3)  # Slightly lower confidence for expanded
+                                        suggestions = self._aggregate_sku_suggestions(
+                                            suggestions, sku, confidence, f"DB (Fuzzy Desc Expanded: {similarity_exp:.2f})")
+                                        print(
+                                            f"    Found in DB (Fuzzy Desc Expanded): {sku} (Sim: {similarity_exp:.2f}, Freq: {frequency}, Conf: {confidence})")
+
                     except Exception as db_err:
                         print(
                             f"    Error querying SQLite DB (4-param): {db_err}")
@@ -1046,6 +1401,7 @@ class FixacarApp:
                     print(
                         f"  Fallback SQLite search (3-param: Make, Year, Series)...")
                     try:
+                        # STEP 1: Try exact series match with fuzzy description
                         cursor.execute("""
                             SELECT sku, normalized_description, COUNT(*) as frequency
                             FROM historical_parts
@@ -1055,49 +1411,59 @@ class FixacarApp:
                         """, (vin_make, vin_year, vin_series))
                         results = cursor.fetchall()
 
-                        # Try fuzzy matching on descriptions
-                        try:
-                            from utils.fuzzy_matcher import find_best_match
+                        # Apply fuzzy description matching (try both original and expanded)
+                        for sku, db_desc, frequency in results:
+                            if sku and sku.strip() and db_desc:
+                                similarity_orig = self._calculate_description_similarity(normalized_original, db_desc)
+                                similarity_exp = self._calculate_description_similarity(normalized_expanded, db_desc)
 
-                            # Group by SKU and find best description match for each
-                            sku_descriptions = {}
-                            for sku, desc, frequency in results:
-                                if sku not in sku_descriptions:
-                                    sku_descriptions[sku] = []
-                                sku_descriptions[sku].append((desc, frequency))
-
-                            for sku, desc_freq_list in sku_descriptions.items():
-                                if sku and sku.strip():
-                                    # Get all descriptions for this SKU
-                                    descriptions = [desc for desc, _ in desc_freq_list]
-
-                                    # Find best fuzzy match
-                                    match_result = find_best_match(
-                                        normalized_desc, descriptions, threshold=0.8)
-
-                                    if match_result:
-                                        best_match_desc, similarity = match_result
-                                        # Find frequency for this description
-                                        frequency = next(freq for desc, freq in desc_freq_list if desc == best_match_desc)
-
-                                        # Confidence based on similarity and frequency
-                                        base_confidence = 0.3 + 0.3 * similarity
-                                        total_freq = sum(freq for _, freq in desc_freq_list)
-                                        freq_boost = 0.2 * (frequency / total_freq) if total_freq > 0 else 0
-                                        confidence = round(base_confidence + freq_boost, 3)
-
-                                        suggestions = self._aggregate_sku_suggestions(
-                                            suggestions, sku, confidence, f"DB (3-param Fuzzy: {similarity:.2f})")
-                                        print(
-                                            f"    Found in DB (3-param Fuzzy): {sku} (Sim: {similarity:.2f}, Freq: {frequency}, Conf: {confidence})")
-                        except ImportError:
-                            # Fallback to exact description matching
-                            for sku, desc, frequency in results:
-                                if sku and sku.strip() and desc == normalized_desc:
+                                # Use the better similarity score
+                                if similarity_orig >= similarity_exp and similarity_orig >= 0.6:
+                                    confidence = round(0.2 + 0.2 * similarity_orig, 3)
                                     suggestions = self._aggregate_sku_suggestions(
-                                        suggestions, sku, 0.4, "DB (3-param Exact)")
+                                        suggestions, sku, confidence, f"DB (3-param Fuzzy Orig: {similarity_orig:.2f})")
                                     print(
-                                        f"    Found in DB (3-param Exact): {sku} (Freq: {frequency}, Conf: 0.4)")
+                                        f"    Found in DB (3-param Fuzzy Orig): {sku} (Sim: {similarity_orig:.2f}, Freq: {frequency}, Conf: {confidence})")
+                                elif similarity_exp >= 0.6:
+                                    confidence = round(0.15 + 0.15 * similarity_exp, 3)  # Slightly lower for expanded
+                                    suggestions = self._aggregate_sku_suggestions(
+                                        suggestions, sku, confidence, f"DB (3-param Fuzzy Exp: {similarity_exp:.2f})")
+                                    print(
+                                        f"    Found in DB (3-param Fuzzy Exp): {sku} (Sim: {similarity_exp:.2f}, Freq: {frequency}, Conf: {confidence})")
+
+                        # STEP 2: If still no results, try fuzzy series + fuzzy description
+                        if not suggestions:
+                            print(
+                                f"  Final Fallback SQLite search (Fuzzy Series: Make, Year, Series LIKE '%{vin_series}%')...")
+                            cursor.execute("""
+                                SELECT sku, normalized_description, COUNT(*) as frequency
+                                FROM historical_parts
+                                WHERE vin_make = ? AND vin_year = ? AND vin_series LIKE ?
+                                GROUP BY sku, normalized_description
+                                ORDER BY frequency DESC
+                            """, (vin_make, vin_year, f'%{vin_series}%'))
+                            fuzzy_results = cursor.fetchall()
+
+                            # Apply fuzzy description matching with lower threshold (try both original and expanded)
+                            for sku, db_desc, frequency in fuzzy_results:
+                                if sku and sku.strip() and db_desc:
+                                    similarity_orig = self._calculate_description_similarity(normalized_original, db_desc)
+                                    similarity_exp = self._calculate_description_similarity(normalized_expanded, db_desc)
+
+                                    # Use the better similarity score
+                                    if similarity_orig >= similarity_exp and similarity_orig >= 0.5:
+                                        confidence = round(0.1 + 0.2 * similarity_orig, 3)
+                                        suggestions = self._aggregate_sku_suggestions(
+                                            suggestions, sku, confidence, f"DB (Fuzzy Series+Desc Orig: {similarity_orig:.2f})")
+                                        print(
+                                            f"    Found in DB (Fuzzy Series+Desc Orig): {sku} (Sim: {similarity_orig:.2f}, Freq: {frequency}, Conf: {confidence})")
+                                    elif similarity_exp >= 0.5:
+                                        confidence = round(0.05 + 0.15 * similarity_exp, 3)  # Even lower for expanded
+                                        suggestions = self._aggregate_sku_suggestions(
+                                            suggestions, sku, confidence, f"DB (Fuzzy Series+Desc Exp: {similarity_exp:.2f})")
+                                        print(
+                                            f"    Found in DB (Fuzzy Series+Desc Exp): {sku} (Sim: {similarity_exp:.2f}, Freq: {frequency}, Conf: {confidence})")
+
                     except Exception as db_err:
                         print(
                             f"    Error querying SQLite DB (3-param): {db_err}")
@@ -1122,13 +1488,28 @@ class FixacarApp:
 
                 if vin_make != 'N/A' and vin_year_str_scalar != 'N/A' and vin_series_str_for_nn != 'N/A':
                     print(
-                        f"  Attempting SKU NN prediction for: Make='{vin_make}', Year='{vin_year_str_scalar}', Series='{vin_series_str_for_nn}', Desc='{expanded_desc}'")
+                        f"  Attempting SKU NN prediction for: Make='{vin_make}', Year='{vin_year_str_scalar}', Series='{vin_series_str_for_nn}', Original='{normalized_original}', Expanded='{normalized_expanded}'")
+
+                    # Try original description first
                     sku_nn_output = self._get_sku_nn_prediction(
                         make=vin_make,
-                        model_year=vin_year_str_scalar,  # Already a string
+                        model_year=vin_year_str_scalar,
                         series=vin_series_str_for_nn,
-                        description=expanded_desc  # Use expanded description for consistency
+                        description=normalized_original
                     )
+
+                    # If no good result, try expanded description
+                    if not sku_nn_output or (sku_nn_output and sku_nn_output[1] < 0.3):
+                        print(f"  Trying NN prediction with expanded description...")
+                        sku_nn_output_expanded = self._get_sku_nn_prediction(
+                            make=vin_make,
+                            model_year=vin_year_str_scalar,
+                            series=vin_series_str_for_nn,
+                            description=normalized_expanded
+                        )
+                        # Use expanded result if it's better
+                        if sku_nn_output_expanded and (not sku_nn_output or sku_nn_output_expanded[1] > sku_nn_output[1]):
+                            sku_nn_output = sku_nn_output_expanded
                     if sku_nn_output:
                         nn_sku, nn_confidence = sku_nn_output
                         if nn_sku and nn_sku.strip():  # Add if not empty
@@ -1216,12 +1597,17 @@ class FixacarApp:
             # Create frames for each part description
             for part_info in self.processed_parts:
                 original_desc = part_info["original"]
+                normalized_original = part_info["normalized_original"]
+
+                # Use the normalized (expanded) version for display, but capitalize it properly
+                display_desc = normalized_original.upper() if normalized_original else original_desc
+
                 # Get suggestions and filter out any empty SKUs that might have slipped through
                 suggestions_list = [(sku, info) for sku, info in self.current_suggestions.get(original_desc, [])
                                     if sku and sku.strip()][:5]
 
                 part_frame = ttk.LabelFrame(
-                    self.results_grid_container, text=f"{original_desc}", padding=5)
+                    self.results_grid_container, text=f"{display_desc}", padding=5)
                 self.part_frames_widgets.append(part_frame)
                 part_frame.columnconfigure(0, weight=1)
                 part_frame.config(width=200)
@@ -1501,7 +1887,7 @@ class FixacarApp:
                         selections_to_save.append({
                             "vin_details": self.vehicle_details,
                             "original_description": original_desc,
-                            "normalized_description": part_data["normalized"],
+                            "normalized_description": part_data["normalized_expanded"],  # Use expanded for consistency
                             "equivalencia_id": part_data["equivalencia_id"],
                             "confirmed_sku": selected_sku,
                             "source": source

@@ -18,49 +18,124 @@ import unicodedata
 
 # Dictionary of common Spanish automotive abbreviations and their full forms
 # This dictionary maps abbreviations to their full forms
+# ALL KEYS ARE LOWERCASE for case-insensitive matching
 AUTOMOTIVE_ABBR = {
-    # Directional terms
-    "izq": "izquierdo",
-    "iz": "izquierdo",
-    "izquier": "izquierdo",
-    "i": "izquierdo",
-    "der": "derecho",
-    "dere": "derecho",
-    "d": "derecho",
-    "del": "delantero",
-    "delan": "delantero",
-    "de": "delantero",
-    "tra": "trasero",
-    "tras": "trasero",
-    "t": "trasero",
+    # Directional terms - LEFT (IZQUIERDA/IZQUIERDO)
+    "izq": "izquierda",
+    "iz": "izquierda",
+    "izquier": "izquierda",
+    "izquie": "izquierda",
+    "izqui": "izquierda",
+    "izqu": "izquierda",
+    "i": "izquierda",
 
-    # Common parts
+    # Directional terms - RIGHT (DERECHA/DERECHO)
+    "der": "derecha",
+    "dere": "derecha",
+    "derec": "derecha",
+    "derech": "derecha",
+    "d": "derecha",
+
+    # Directional terms - FRONT (DELANTERA/DELANTERO)
+    "del": "delantera",
+    "delan": "delantera",
+    "delant": "delantera",
+    "delante": "delantera",
+    "de": "delantera",
+
+    # Directional terms - REAR (TRASERA/TRASERO)
+    "tra": "trasera",
+    "tras": "trasera",
+    "trase": "trasera",
+    "traser": "trasera",
+    "t": "trasera",
+
+    # Directional terms - SUPERIOR/INFERIOR
+    "sup": "superior",
+    "super": "superior",
+    "inf": "inferior",
+    "infer": "inferior",
+    "ant": "anterior",
+    "anter": "anterior",
+    "post": "posterior",
+    "poster": "posterior",
+
+    # Common parts - PARAGOLPES
     "parag": "paragolpes",
     "paragol": "paragolpes",
-    "guard": "guardabarro",
+    "paragolp": "paragolpes",
+    "bomper": "paragolpes",
+    "defensa": "paragolpes",
+    "def": "paragolpes",
+
+    # Common parts - GUARDAFANGO/GUARDABARRO
+    "guard": "guardafango",
+    "guarda": "guardafango",
+    "guardaf": "guardafango",
+    "guardafang": "guardafango",
     "guardab": "guardabarro",
+    "guardabar": "guardabarro",
+    "guardabarr": "guardabarro",
+
+    # Common parts - FAROLA/LUZ
     "faro": "farola",
     "far": "farola",
     "luz": "farola",
     "luces": "farola",
+
+    # Common parts - ESPEJO
     "espej": "espejo",
     "esp": "espejo",
+    "espe": "espejo",
+
+    # Common parts - PUERTA
     "puert": "puerta",
+    "puer": "puerta",
     "pta": "puerta",
+
+    # Common parts - CAPO
     "capot": "capo",
     "cap": "capo",
+
+    # Common parts - PARABRISAS
     "parabr": "parabrisas",
     "parabrisa": "parabrisas",
+    "parabris": "parabrisas",
     "vidrio": "parabrisas",
     "vidr": "parabrisas",
+
+    # Common parts - MOTOR
     "motor": "motor",
     "mot": "motor",
-    "bomper": "paragolpes",
-    "defensa": "paragolpes",
-    "def": "paragolpes",
+
+    # Common parts - SOPORTE
     "soporte": "soporte",
     "sop": "soporte",
     "sopt": "soporte",
+    "sopor": "soporte",
+    "suport": "soporte",
+
+    # Common parts - ELECTROVENTILADOR
+    "electrovent": "electroventilador",
+    "electrov": "electroventilador",
+    "electroventil": "electroventilador",
+
+    # Common parts - ABSORBEDOR
+    "absorb": "absorbedor",
+    "absorbe": "absorbedor",
+    "absorbed": "absorbedor",
+    "absorbimpacto": "absorbedor de impactos",
+    "absorb impacto": "absorbedor de impactos",
+
+    # Common parts - ANTINIEBLA
+    "antinieb": "antiniebla",
+    "antiniebla": "antiniebla",
+    "antineb": "antiniebla",
+
+    # Common parts - TRAVIESA
+    "travies": "traviesa",
+    "travi": "traviesa",
+    "trav": "traviesa",
 
     # Common conjunctions and prepositions that might be abbreviated
     "c": "con",
@@ -97,6 +172,7 @@ COMPOUND_WORDS = {
 def expand_abbreviations(text: str) -> str:
     """
     Expands common automotive abbreviations in the text.
+    CASE-INSENSITIVE: Handles FAROLA, farola, Farola identically.
 
     Args:
         text: The input text with possible abbreviations
@@ -104,17 +180,79 @@ def expand_abbreviations(text: str) -> str:
     Returns:
         Text with abbreviations expanded to their full forms
     """
-    words = text.split()
+    if not isinstance(text, str):
+        return ""
+
+    words = text.lower().split()  # Convert to lowercase for case-insensitive matching
     expanded_words = []
 
     for word in words:
-        # Check if the word is in our abbreviation dictionary
+        # Check if the word is in our abbreviation dictionary (all keys are lowercase)
         if word in AUTOMOTIVE_ABBR:
             expanded_words.append(AUTOMOTIVE_ABBR[word])
         else:
             expanded_words.append(word)
 
     return " ".join(expanded_words)
+
+
+def normalize_gender_and_plurals(text: str) -> str:
+    """
+    Normalizes gender variations and plurals to a canonical form.
+
+    Examples:
+    - derecho/derecha -> derecha (feminine as canonical)
+    - izquierdo/izquierda -> izquierda (feminine as canonical)
+    - delantero/delantera -> delantera (feminine as canonical)
+    - farola/farolas -> farola (singular as canonical)
+    - paragolpe/paragolpes -> paragolpes (plural as canonical for this specific case)
+
+    Args:
+        text: Input text to normalize
+
+    Returns:
+        Text with gender and plural variations normalized
+    """
+    if not isinstance(text, str):
+        return ""
+
+    words = text.split()
+    normalized_words = []
+
+    # Gender normalization map (masculine -> feminine)
+    gender_map = {
+        "derecho": "derecha",
+        "izquierdo": "izquierda",
+        "delantero": "delantera",
+        "trasero": "trasera",
+        "anterior": "anterior",  # No change
+        "posterior": "posterior",  # No change
+        "superior": "superior",  # No change
+        "inferior": "inferior",  # No change
+    }
+
+    # Plural normalization map (context-dependent)
+    plural_map = {
+        "farolas": "farola",  # Singular for lights
+        "luces": "luz",       # Singular for lights
+        "espejos": "espejo",  # Singular for mirrors
+        "puertas": "puerta",  # Singular for doors
+        "paragolpe": "paragolpes",  # Plural for bumpers (this is the standard form)
+        "guardafangos": "guardafango",  # Singular for fenders
+        "guardabarros": "guardabarro",  # Singular for mudguards
+    }
+
+    for word in words:
+        # First check gender normalization
+        if word in gender_map:
+            normalized_words.append(gender_map[word])
+        # Then check plural normalization
+        elif word in plural_map:
+            normalized_words.append(plural_map[word])
+        else:
+            normalized_words.append(word)
+
+    return " ".join(normalized_words)
 
 
 def split_compound_words(text: str) -> str:
@@ -154,6 +292,8 @@ def calculate_similarity(s1: str, s2: str) -> float:
     """
     Calculates the similarity ratio between two strings using SequenceMatcher.
 
+    CASE-INSENSITIVE: All comparisons are done in lowercase.
+
     Args:
         s1: First string
         s2: Second string
@@ -161,7 +301,9 @@ def calculate_similarity(s1: str, s2: str) -> float:
     Returns:
         Similarity ratio between 0.0 and 1.0
     """
-    return SequenceMatcher(None, s1, s2).ratio()
+    if not s1 or not s2:
+        return 0.0
+    return SequenceMatcher(None, s1.lower(), s2.lower()).ratio()
 
 
 def find_best_match(query: str, candidates: List[str], threshold: float = 0.7) -> Optional[Tuple[str, float]]:

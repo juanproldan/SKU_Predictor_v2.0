@@ -52,7 +52,8 @@ def load_equivalencias(file_path: str) -> dict:
                         # this will overwrite with the latest one.
                         # If a term appears in multiple rows, the last row's ID will be used.
                         # This behavior should be acceptable as per PRD (one term maps to one ID).
-                        equivalencias_map[normalized_term] = equivalencia_row_id
+                        # Store with lowercase key for case-insensitive lookup
+                        equivalencias_map[normalized_term.lower()] = equivalencia_row_id
 
         print(
             f"Loaded {len(equivalencias_map)} normalized term mappings from {len(df)} rows in Equivalencias.")
@@ -176,9 +177,9 @@ def process_consolidado_data(conn: sqlite3.Connection, consolidado_path: str, eq
 
                 normalized_description = normalize_text(original_description)
 
-                # Task 1.8: Look up Equivalencia_Row_ID
+                # Task 1.8: Look up Equivalencia_Row_ID (CASE-INSENSITIVE)
                 equivalencia_row_id = equivalencias_map.get(
-                    normalized_description)  # Can be None
+                    normalized_description.lower())  # Can be None
 
                 # Task 1.10: Load into SQLite
                 try:

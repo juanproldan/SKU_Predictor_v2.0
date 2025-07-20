@@ -11,8 +11,15 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 try:
     from utils.pytorch_tokenizer import PyTorchTokenizer
+    from utils.text_utils import normalize_text
 except ImportError:
     from utils.dummy_tokenizer import DummyTokenizer
+    try:
+        from utils.text_utils import normalize_text
+    except ImportError:
+        # Fallback normalize function if text_utils not available
+        def normalize_text(text, **kwargs):
+            return text.lower().strip()
 
 # --- Configuration ---
 DB_PATH = "data/fixacar_history.db"
@@ -89,6 +96,10 @@ def load_and_preprocess_data():
     print("Tokenizing and padding 'normalized_description'...")
     # Ensure descriptions are strings
     descriptions = df['normalized_description'].astype(str).tolist()
+
+    # Additional normalization to ensure consistency (case-insensitive, synonyms, etc.)
+    print("Applying additional text normalization for consistency...")
+    descriptions = [normalize_text(desc, expand_linguistic_variations=True) for desc in descriptions]
 
     # Create a tokenizer using our PyTorch-compatible implementation
     try:
