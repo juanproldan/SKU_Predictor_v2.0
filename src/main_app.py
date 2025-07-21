@@ -71,7 +71,7 @@ NUM_CONSOLIDADO_CHUNKS_FOR_VIN_LOAD = 10
 
 # In-memory data stores
 equivalencias_map_global = {}
-synonym_expansion_map_global = {}  # New: maps synonyms to canonical forms
+synonym_expansion_map_global = {}  # New: maps synonyms to equivalence group IDs
 maestro_data_global = []  # This will hold the list of dictionaries
 # VIN details lookup is replaced by models
 
@@ -235,7 +235,7 @@ class FixacarApp:
     def expand_synonyms(self, text: str) -> str:
         """
         Global synonym expansion function that preprocesses text by replacing
-        industry-specific synonyms with their canonical forms before any prediction method.
+        industry-specific synonyms with their equivalence group representatives before any prediction method.
 
         This function ONLY handles Equivalencias.xlsx synonyms (industry-specific terms).
         Linguistic variations (abbreviations, gender, plurals) are handled automatically
@@ -256,9 +256,11 @@ class FixacarApp:
             # Check if this word has an industry-specific synonym in Equivalencias (CASE-INSENSITIVE)
             word_lower = word.lower()
             if word_lower in synonym_expansion_map_global:
-                canonical_form = synonym_expansion_map_global[word_lower]
-                expanded_words.append(canonical_form)
-                print(f"    Industry synonym: '{word}' -> '{canonical_form}'")
+                group_id = synonym_expansion_map_global[word_lower]
+                # Use the group_id as a consistent representation
+                group_representative = f"GROUP_{group_id}"
+                expanded_words.append(group_representative)
+                print(f"    Industry synonym: '{word}' -> '{group_representative}' (Group ID: {group_id})")
             else:
                 expanded_words.append(word)
 
@@ -269,36 +271,33 @@ class FixacarApp:
         """
         Calculate confidence based on absolute frequency of SKU occurrences in database.
 
-        This replaces the old relative confidence calculation that incorrectly gave high confidence
-        to single occurrences. Now confidence is based on actual frequency thresholds.
-
-        Confidence Scale:
-        - 1-2 occurrences: 0.05-0.1 (very low - likely supplier errors)
-        - 3-9 occurrences: 0.1-0.2 (low - insufficient data)
-        - 10-19 occurrences: 0.2-0.4 (medium-low - some confidence)
-        - 20+ occurrences: 0.4-0.7 (reliable - good confidence)
+        Updated confidence ranges for new priority system:
+        - 1-2 occurrences: 0.4-0.45 (40-45%) - very low confidence
+        - 3-9 occurrences: 0.45-0.55 (45-55%) - low confidence
+        - 10-19 occurrences: 0.55-0.7 (55-70%) - medium confidence
+        - 20+ occurrences: 0.7-0.8 (70-80%) - high confidence
 
         Args:
             frequency: Number of times this SKU appears in database for this combination
             prediction_type: Type of prediction for confidence adjustment
 
         Returns:
-            Confidence score between 0.05 and 0.7
+            Confidence score between 0.4 and 0.8 (40-80%)
         """
         if frequency < 3:
             # Very low confidence for rare occurrences (likely errors)
-            base_confidence = 0.05 + 0.025 * frequency  # 0.05-0.1 range
+            base_confidence = 0.4 + 0.025 * frequency  # 0.4-0.45 range
         elif frequency < 10:
             # Low confidence for insufficient data
-            base_confidence = 0.1 + 0.01 * frequency  # 0.1-0.19 range
+            base_confidence = 0.45 + 0.01 * frequency  # 0.45-0.54 range
         elif frequency < 20:
-            # Medium-low confidence for moderate data
-            base_confidence = 0.2 + 0.01 * frequency  # 0.2-0.39 range
+            # Medium confidence for moderate data
+            base_confidence = 0.55 + 0.0075 * frequency  # 0.55-0.7 range
         else:
-            # Good confidence for reliable data (20+ occurrences)
+            # High confidence for reliable data (20+ occurrences)
             # Cap at 50+ occurrences to avoid overconfidence
             capped_frequency = min(frequency, 50)
-            base_confidence = 0.4 + 0.006 * capped_frequency  # 0.4-0.7 range
+            base_confidence = 0.7 + 0.002 * capped_frequency  # 0.7-0.8 range
 
         # Slight adjustment based on prediction type
         if prediction_type == "DB (4-param Exact)":
@@ -369,8 +368,8 @@ class FixacarApp:
         3. Text Normalization: Convert to lowercase, remove extra spaces, standardize punctuation
 
         Example:
-        - Input: "FAROLA IZQ" → "faro izquierdo"
-        - Target: "FAROLA IZQUIERDA" → "faro izquierdo"
+        - Input: "FAROLA IZQ" → "GROUP_1001"
+        - Target: "FAROLA IZQUIERDA" → "GROUP_1001"
         - Result: Perfect match (1.0 similarity) instead of penalized fuzzy match (0.85)
         """
         if not text or not text.strip():
@@ -612,7 +611,7 @@ class FixacarApp:
         try:
             df = pd.read_excel(file_path, sheet_name=0)
             equivalencias_map = {}
-            synonym_expansion_map = {}  # New: maps synonyms to canonical forms
+            synonym_expansion_map = {}  # New: maps synonyms to equivalence group IDs
 
             for index, row in df.iterrows():
                 equivalencia_row_id = index + 1
@@ -628,12 +627,12 @@ class FixacarApp:
                             # Store with lowercase key for case-insensitive lookup
                             equivalencias_map[normalized_term.lower()] = equivalencia_row_id
 
-                # Second pass: create synonym mappings (all terms map to the first/canonical term)
+                # Second pass: create synonym mappings (all terms map to the equivalence group ID)
                 # Ensure case-insensitive storage by using lowercase keys
                 if row_terms:
-                    canonical_term = row_terms[0]  # Use first term as canonical
+                    # All terms in this row belong to the same equivalence group
                     for term in row_terms:
-                        synonym_expansion_map[term.lower()] = canonical_term
+                        synonym_expansion_map[term.lower()] = equivalencia_row_id
 
             # Store the synonym expansion map globally for use in preprocessing
             global synonym_expansion_map_global
@@ -903,6 +902,18 @@ class FixacarApp:
         Returns the corrected VIN string.
         """
         return vin.upper().replace('I', '1').replace('O', '0').replace('Q', '0')
+
+    def _format_confidence_percentage(self, confidence: float) -> str:
+        """
+        Converts confidence score to percentage format for display.
+
+        Args:
+            confidence: Confidence score (0.0-1.0)
+
+        Returns:
+            Formatted percentage string (e.g., "75%")
+        """
+        return f"{int(confidence * 100)}%"
 
     def _get_sku_nn_prediction(self, make: str, model_year: str, series: str, description: str) -> str | None:
         """
@@ -1194,12 +1205,13 @@ class FixacarApp:
         """
         Calculate consensus-adjusted confidence based on prediction sources.
 
-        Rules:
-        - Single source (Maestro only): Max 0.90 confidence
-        - Single source (NN only): Max 0.85 confidence
-        - Single source (DB only): Max 0.70 confidence
-        - Multiple sources (Maestro + NN): Can reach 1.00 confidence
-        - Multiple sources (any combination): Bonus for consensus
+        Updated rules for new priority system:
+        - Single source (Maestro only): Max 90% (0.90) confidence
+        - Single source (NN only): Max 85% (0.85) confidence
+        - Single source (DB only): Max 80% (0.80) confidence
+        - NN + DB consensus: Higher value + 10% boost
+        - Maestro + NN consensus: 100% (1.0) confidence
+        - All three sources: 100% (1.0) confidence
 
         Args:
             base_confidence: Original confidence score
@@ -1212,11 +1224,11 @@ class FixacarApp:
             # Single source - apply caps
             source = sources[0]
             if "Maestro" in source:
-                return min(base_confidence, 0.90)
+                return min(base_confidence, 0.90)  # 90% max for Maestro alone
             elif "SKU-NN" in source or "NN" in source:
-                return min(base_confidence, 0.85)
+                return min(base_confidence, 0.85)  # 85% max for NN alone
             elif "DB" in source:
-                return min(base_confidence, 0.70)
+                return min(base_confidence, 0.80)  # 80% max for DB alone (increased from 70%)
             else:
                 return min(base_confidence, 0.80)  # Default single source cap
 
@@ -1226,17 +1238,21 @@ class FixacarApp:
             has_nn = any("SKU-NN" in source or "NN" in source for source in sources)
             has_db = any("DB" in source for source in sources)
 
-            # Maestro + NN consensus can reach 1.00
-            if has_maestro and has_nn:
-                # Ensure Maestro + NN can reach 1.00 by using max of single-source caps + bonus
-                maestro_cap = 0.90
-                nn_cap = 0.85
-                consensus_bonus = 0.15  # Larger bonus to ensure 1.00 is reachable
-                return min(max(maestro_cap, nn_cap) + consensus_bonus, 1.00)
+            # All three sources = 100% confidence
+            if has_maestro and has_nn and has_db:
+                return 1.00
+
+            # Maestro + NN consensus = 100% confidence
+            elif has_maestro and has_nn:
+                return 1.00
+
+            # NN + DB consensus: Higher value + 10% boost
+            elif has_nn and has_db:
+                return min(base_confidence + 0.10, 0.95)
 
             # Other multi-source combinations get smaller bonus
             elif len(sources) >= 2:
-                return min(base_confidence + 0.05, 0.95)  # Increased bonus, capped at 0.95
+                return min(base_confidence + 0.05, 0.90)
 
             return base_confidence
 
@@ -1500,20 +1516,97 @@ class FixacarApp:
                     except ImportError:
                         print("    Fuzzy matching not available for Maestro search")
 
-                # SQLite Search (4-parameter matching: Make, Year, Series, Description)
+                # --- Neural Network Prediction (Priority 2) ---
+                # Ensure vehicle details are strings for the NN model
+                predicted_series_val = self.vehicle_details.get('Series', 'N/A')
+                if isinstance(predicted_series_val, np.ndarray) and predicted_series_val.size > 0:
+                    vin_series_str_for_nn = str(predicted_series_val.item())
+                elif pd.notna(predicted_series_val):
+                    vin_series_str_for_nn = str(predicted_series_val)
+                else:
+                    vin_series_str_for_nn = "N/A"
+
+                if vin_make != 'N/A' and vin_year_str_scalar != 'N/A' and vin_series_str_for_nn != 'N/A':
+                    print(f"  🔄 Applying unified preprocessing for Neural Network input...")
+
+                    # Apply unified preprocessing to input descriptions for Neural Network
+                    preprocessed_original = self.unified_text_preprocessing(original_desc)
+                    preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
+
+                    print(f"  Attempting SKU NN prediction for: Make='{vin_make}', Year='{vin_year_str_scalar}', Series='{vin_series_str_for_nn}'")
+                    print(f"  NN Input (preprocessed original): '{preprocessed_original}'")
+                    print(f"  NN Input (preprocessed expanded): '{preprocessed_expanded}'")
+
+                    # Try preprocessed original description first
+                    sku_nn_output = self._get_sku_nn_prediction(
+                        make=vin_make,
+                        model_year=vin_year_str_scalar,
+                        series=vin_series_str_for_nn,
+                        description=preprocessed_original
+                    )
+
+                    # If no good result, try preprocessed expanded description
+                    if not sku_nn_output or (sku_nn_output and sku_nn_output[1] < 0.7):
+                        print(f"  Trying NN prediction with preprocessed expanded description...")
+                        sku_nn_output_expanded = self._get_sku_nn_prediction(
+                            make=vin_make,
+                            model_year=vin_year_str_scalar,
+                            series=vin_series_str_for_nn,
+                            description=preprocessed_expanded
+                        )
+                        # Use expanded result if it's better
+                        if sku_nn_output_expanded and (not sku_nn_output or sku_nn_output_expanded[1] > sku_nn_output[1]):
+                            sku_nn_output = sku_nn_output_expanded
+
+                    if sku_nn_output:
+                        nn_sku, nn_confidence = sku_nn_output
+                        if nn_sku and nn_sku.strip():  # Add if not empty
+                            suggestions = self._aggregate_sku_suggestions(
+                                suggestions, nn_sku, float(nn_confidence), "SKU-NN")
+                            print(f"    Found via SKU-NN: {nn_sku} (Conf: {nn_confidence:.4f})")
+                else:
+                    print("  Skipping SKU NN prediction due to missing Make, Year, or Series from VIN prediction.")
+                # --- End Neural Network Prediction ---
+
+                # SQLite Search (4-parameter matching: Make, Year, Series, Description) - Priority 3
                 if vin_year is not None and vin_series != 'N/A':
                     print(
                         f"  Searching SQLite DB (Make: {vin_make}, Year: {vin_year}, Series: {vin_series})...")
                     try:
-                        # STEP 1: Try exact series and exact description match (abbreviated first)
+                        # DUAL MATCHING STRATEGY: Try exact match first, then normalized match
+
+                        # STEP 1A: Try exact description match (no normalization) - handles system-generated descriptions
+                        print(f"    Trying exact match with original description: '{original_desc}'")
                         cursor.execute("""
                             SELECT sku, COUNT(*) as frequency
                             FROM historical_parts
                             WHERE vin_make = ? AND vin_year = ? AND vin_series = ? AND normalized_description = ?
                             GROUP BY sku
                             ORDER BY COUNT(*) DESC
-                        """, (vin_make, vin_year, vin_series, abbreviated_desc))
-                        results = cursor.fetchall()
+                        """, (vin_make, vin_year, vin_series, original_desc))
+                        exact_results = cursor.fetchall()
+
+                        if exact_results:
+                            print(f"    ✅ Found {len(exact_results)} unique SKUs via EXACT match")
+                            # Apply consensus logic to filter out minority/outlier SKUs
+                            consensus_skus = self.apply_consensus_logic(exact_results, min_consensus_ratio=0.6)
+                            for sku, frequency in consensus_skus:
+                                confidence = self.calculate_frequency_based_confidence(frequency, "DB-Exact")
+                                final_confidence = self._calculate_consensus_confidence(confidence, ["DB-Exact"])
+                                suggestions = self._aggregate_sku_suggestions(suggestions, sku, final_confidence, "DB-Exact")
+                                print(f"    ✅ Found in DB (Exact Match): {sku} (Freq: {frequency}, Conf: {final_confidence:.4f})")
+
+                        # STEP 1B: If no exact matches, try normalized abbreviated description
+                        if not exact_results:
+                            print(f"    No exact matches, trying normalized abbreviated: '{abbreviated_desc}'")
+                            cursor.execute("""
+                                SELECT sku, COUNT(*) as frequency
+                                FROM historical_parts
+                                WHERE vin_make = ? AND vin_year = ? AND vin_series = ? AND normalized_description = ?
+                                GROUP BY sku
+                                ORDER BY COUNT(*) DESC
+                            """, (vin_make, vin_year, vin_series, abbreviated_desc))
+                            results = cursor.fetchall()
 
                         if results:
                             print(f"    Found {len(results)} unique SKUs in DB (4-param Exact)")
@@ -1788,63 +1881,7 @@ class FixacarApp:
 
 
 
-                # --- Add SKU NN Prediction ---
-                # Ensure vehicle details are strings for the NN model
-                # vin_make is already a string
-                # vin_year_str_scalar is already a string
 
-                predicted_series_val = self.vehicle_details.get(
-                    'Series', 'N/A')
-                if isinstance(predicted_series_val, np.ndarray) and predicted_series_val.size > 0:
-                    vin_series_str_for_nn = str(predicted_series_val.item())
-                elif pd.notna(predicted_series_val):
-                    vin_series_str_for_nn = str(predicted_series_val)
-                else:
-                    vin_series_str_for_nn = "N/A"
-
-                if vin_make != 'N/A' and vin_year_str_scalar != 'N/A' and vin_series_str_for_nn != 'N/A':
-                    print(f"  🔄 Applying unified preprocessing for Neural Network input...")
-
-                    # Apply unified preprocessing to input descriptions for Neural Network
-                    preprocessed_original = self.unified_text_preprocessing(original_desc)
-                    preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
-
-                    print(
-                        f"  Attempting SKU NN prediction for: Make='{vin_make}', Year='{vin_year_str_scalar}', Series='{vin_series_str_for_nn}'")
-                    print(f"  NN Input (preprocessed original): '{preprocessed_original}'")
-                    print(f"  NN Input (preprocessed expanded): '{preprocessed_expanded}'")
-
-                    # Try preprocessed original description first
-                    sku_nn_output = self._get_sku_nn_prediction(
-                        make=vin_make,
-                        model_year=vin_year_str_scalar,
-                        series=vin_series_str_for_nn,
-                        description=preprocessed_original
-                    )
-
-                    # If no good result, try preprocessed expanded description
-                    if not sku_nn_output or (sku_nn_output and sku_nn_output[1] < 0.3):
-                        print(f"  Trying NN prediction with preprocessed expanded description...")
-                        sku_nn_output_expanded = self._get_sku_nn_prediction(
-                            make=vin_make,
-                            model_year=vin_year_str_scalar,
-                            series=vin_series_str_for_nn,
-                            description=preprocessed_expanded
-                        )
-                        # Use expanded result if it's better
-                        if sku_nn_output_expanded and (not sku_nn_output or sku_nn_output_expanded[1] > sku_nn_output[1]):
-                            sku_nn_output = sku_nn_output_expanded
-                    if sku_nn_output:
-                        nn_sku, nn_confidence = sku_nn_output
-                        if nn_sku and nn_sku.strip():  # Add if not empty
-                            suggestions = self._aggregate_sku_suggestions(
-                                suggestions, nn_sku, float(nn_confidence), "SKU-NN")
-                            print(
-                                f"    Found via SKU-NN: {nn_sku} (Conf: {nn_confidence:.4f})")
-                else:
-                    print(
-                        "  Skipping SKU NN prediction due to missing Make, Year, or Series from VIN prediction.")
-                # --- End SKU NN Prediction ---
 
                 sorted_suggestions = sorted(
                     suggestions.items(), key=lambda item: item[1]['confidence'], reverse=True)
@@ -1976,7 +2013,7 @@ class FixacarApp:
 
                         rb = ttk.Radiobutton(
                             part_frame,
-                            text=f"{sku} (Conf: {conf:.2f}, {display_source})",
+                            text=f"{sku} ({self._format_confidence_percentage(conf)}, {display_source})",
                             variable=self.selection_vars[original_desc],
                             value=sku
                         )

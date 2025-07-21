@@ -65,7 +65,7 @@
   - *Implementation: 4-source prediction system with confidence scoring and ranking*
 
 * ✅ **As a Fixacar employee, I want to see how confident the system is about each suggested SKU, including predictions and Maestro matches.**
-  - *Implementation: Confidence scores (0.0-1.0) with source attribution (Maestro, Database, Neural Network, Fuzzy)*
+  - *Implementation: Confidence scores (0-100%) with source attribution (Maestro, Database, Neural Network, Fuzzy)*
 
 * ✅ **As a Fixacar employee using my expertise, I want to select the correct SKU(s) from the suggested list or manually enter one.**
   - *Implementation: Radio button selection interface with manual entry option*
@@ -113,15 +113,16 @@
     * ✅ **Global Synonym Expansion System** - Revolutionary preprocessing approach
     * ✅ **Loads `Equivalencias.xlsx`** into dual in-memory structures:
       - **Equivalencias Map**: normalized_term → Equivalencia_Row_ID
-      - **Synonym Expansion Map**: synonym → canonical_form
-    * ✅ **Row-based synonym grouping**:
-      - Each row represents synonymous terms
-      - First term becomes canonical form
-      - All terms in row map to canonical form
+      - **Synonym Expansion Map**: synonym → equivalence_group_id
+    * ✅ **Equivalence group-based synonym handling**:
+      - Each row represents an equivalence group of synonymous terms
+      - All terms in a group are treated as equal (no hierarchy)
+      - Each group gets a unique Group_ID for identification
+      - All terms in group map to the same Group_ID
     * ✅ **Global preprocessing function** (`expand_synonyms()`):
       - Processes ALL descriptions before ANY prediction method
       - Ensures consistent input across Maestro, Database, and Neural Network
-      - Example: "FAROLA IZQ", "FAROLA IZ" → "FAROLA IZQUIERDA"
+      - Example: "FAROLA IZQ", "FAROLA IZ" → "GROUP_1001" (equivalence group)
     * ✅ **Equivalencia_Row_ID assignment** (1-based row index)
     * ✅ **Fallback handling** for unrecognized terms (None/-1 assignment)
 
@@ -147,39 +148,49 @@
       3. **Equivalencia Lookup**: Find Equivalencia_Row_ID
       4. **Fuzzy Fallback**: Handle unrecognized terms
 
-    * ✅ **PREDICTION SOURCE 1: Maestro Data (Confidence: 1.0)**
+    * ✅ **PREDICTION SOURCE 1: Maestro Data (Confidence: 90-100%)**
       - **4-Parameter Exact Matching**: Make + Year + Series + Description
-      - **Fallback EqID Matching**: Make + Year + Equivalencia_Row_ID (Conf: 0.9)
+      - **Solo confidence**: 90% (0.9) - Expert validated but not perfect
+      - **With NN consensus**: 100% (1.0) - Ultimate confidence, auto-selected
       - **Expert-validated entries** take highest priority
       - **Source**: User-confirmed historical selections
 
-    * ✅ **PREDICTION SOURCE 2: Historical Database (Confidence: 0.5-0.9)**
-      - **SQLite queries** on `fixacar_history.db`
-      - **Frequency-based confidence**: 0.5 + 0.4 × (frequency/total_matches)
-      - **Matching criteria**: Make + Year + Equivalencia_Row_ID
-      - **Source**: Historical bid data
-
-    * ✅ **PREDICTION SOURCE 3: Neural Network (Confidence: Variable)**
+    * ✅ **PREDICTION SOURCE 2: Neural Network (Confidence: 70-85%)**
       - **PyTorch Optimized Model** with bidirectional LSTM + attention
       - **4-Parameter Input**: Make + Year + Series + Description
+      - **Variable confidence**: Based on model prediction confidence scores
       - **Advanced architecture**: Embedding → LSTM → Attention → Dense layers
       - **Source**: AI-powered prediction for new combinations
 
-    * ✅ **PREDICTION SOURCE 4: Fuzzy Matching (Confidence: 0.1-0.4)**
+    * ✅ **PREDICTION SOURCE 3: Historical Database (Confidence: 40-80%)**
+      - **SQLite queries** on `fixacar_history.db`
+      - **Frequency-based confidence**: High (80%) for 20+ exact matches, Low (40%) for few matches
+      - **Quality-based scoring**: Penalties for outliers and fuzzy matches
+      - **Matching criteria**: Make + Year + Equivalencia_Row_ID
+      - **Source**: Historical bid data
+
+    * ✅ **PREDICTION SOURCE 4: Fuzzy Matching (Confidence: 20-60%)**
       - **Similarity-based matching** (threshold ≥ 0.8)
       - **Applied to both** Maestro and Database when exact matches fail
       - **Confidence proportional** to similarity score
       - **Source**: Fallback for unrecognized descriptions
 
+    * ✅ **Consensus Logic & Confidence Boosting**:
+      - **Maestro + NN consensus**: 100% confidence, auto-selected in UI
+      - **NN + Database consensus**: Higher value + 10% boost (e.g., 70% + 60% = 80%)
+      - **All three sources**: 100% confidence (ultimate validation)
+      - **Display format**: Percentages (70% instead of 0.7) for better UX
+
     * ✅ **Result Combination & Ranking**:
       - **Duplicate removal**: Keep highest confidence for each SKU
       - **Confidence-based sorting**: Highest confidence first
       - **Source attribution**: Users see prediction source
+      - **Auto-selection**: 100% confidence predictions pre-selected
 * **3.7 Output Interface - ✅ IMPLEMENTED:**
     * ✅ **Vehicle Details Display**: Shows predicted Make, Model Year, Series from VIN
     * ✅ **Ranked SKU Suggestions**: Multiple suggestions per part description
     * ✅ **Confidence & Source Visualization**:
-      - Confidence scores (0.0-1.0) clearly displayed
+      - Confidence scores (0-100%) clearly displayed
       - Source attribution (Maestro, DB, Neural Network, Fuzzy)
     * ✅ **Radio Button Selection Interface**: User-friendly SKU confirmation
     * ✅ **Manual Entry Option**: Expert override capability
@@ -277,7 +288,7 @@
       - **Data types**: Proper integer/string handling with bracketed value correction
     * ✅ **Equivalencias Lookup Maps**: Dual mapping system
       - **equivalencias_map_global**: normalized_term → Equivalencia_Row_ID
-      - **synonym_expansion_map_global**: synonym → canonical_form
+      - **synonym_expansion_map_global**: synonym → equivalence_group_id
     * ✅ **Loaded Prediction Models**: Multiple models in memory
       - **VIN Prediction Models**: Make, Year, Series predictors with encoders
       - **SKU Neural Network**: PyTorch model with optimized architecture
@@ -353,7 +364,7 @@
 * **5.2 Usability - ✅ USER-FRIENDLY:**
     * ✅ **Intuitive interface**: Simple two-column layout with clear labeling
     * ✅ **Non-technical user focus**: No technical jargon in UI
-    * ✅ **Visual feedback**: Confidence scores, source attribution, progress indicators
+    * ✅ **Visual feedback**: Confidence percentages, source attribution, progress indicators
     * ✅ **Error handling**: User-friendly error messages with guidance
     * ✅ **Responsive design**: Adapts to different window sizes
 

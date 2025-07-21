@@ -144,6 +144,10 @@ AUTOMOTIVE_ABBR = {
     "s/": "sin",
     "p": "para",
     "p/": "para",
+
+    # Material abbreviations
+    "plast": "plastico",
+    "plastico": "plastico",  # Ensure consistency
 }
 
 # Common word combinations that might be written without spaces
@@ -198,14 +202,14 @@ def expand_abbreviations(text: str) -> str:
 
 def normalize_gender_and_plurals(text: str) -> str:
     """
-    Normalizes gender variations and plurals to a canonical form.
+    Normalizes gender variations and plurals to a consistent form.
 
     Examples:
-    - derecho/derecha -> derecha (feminine as canonical)
-    - izquierdo/izquierda -> izquierda (feminine as canonical)
-    - delantero/delantera -> delantera (feminine as canonical)
-    - farola/farolas -> farola (singular as canonical)
-    - paragolpe/paragolpes -> paragolpes (plural as canonical for this specific case)
+    - derecho/derecha -> derecha (feminine as standard)
+    - izquierdo/izquierda -> izquierda (feminine as standard)
+    - delantero/delantera -> delantera (feminine as standard)
+    - farola/farolas -> farola (singular as standard)
+    - paragolpe/paragolpes -> paragolpes (plural as standard for this specific case)
 
     Args:
         text: Input text to normalize

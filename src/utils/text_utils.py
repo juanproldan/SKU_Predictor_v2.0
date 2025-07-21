@@ -4,11 +4,11 @@ from typing import Optional, List, Tuple
 
 # Import our fuzzy matching utilities
 try:
-    from utils.fuzzy_matcher import fuzzy_normalize_text, get_fuzzy_matches, find_best_match
+    from utils.fuzzy_matcher import fuzzy_normalize_text, get_fuzzy_matches, find_best_match, AUTOMOTIVE_ABBR
 except ImportError:
     # Fallback for direct execution if src is not in path
     try:
-        from .fuzzy_matcher import fuzzy_normalize_text, get_fuzzy_matches, find_best_match
+        from .fuzzy_matcher import fuzzy_normalize_text, get_fuzzy_matches, find_best_match, AUTOMOTIVE_ABBR
     except ImportError:
         # If fuzzy_matcher is not available, define placeholder functions
         def fuzzy_normalize_text(text: str) -> str:
@@ -25,10 +25,45 @@ except ImportError:
                 return (query, 1.0)
             return None
 
+        # Placeholder for AUTOMOTIVE_ABBR if module not available
+        AUTOMOTIVE_ABBR = {}
+
+
+def smart_dot_handling(text: str) -> str:
+    """
+    Smart dot handling for automotive part descriptions.
+
+    Converts dots to spaces ONLY when they're between letters/numbers,
+    making abbreviated descriptions more readable.
+
+    Examples:
+    - "GUARDAP.PLAST.TRA.D." → "GUARDAP PLAST TRA D"
+    - "PART.123.XYZ" → "PART 123 XYZ"
+    - "A.B.C" → "A B C"
+
+    Args:
+        text: Input text with potential dot separators
+
+    Returns:
+        Text with dots converted to spaces where appropriate
+    """
+    if not isinstance(text, str):
+        return ""
+
+    # Replace dots between alphanumeric characters with spaces
+    # Pattern: Letter/Number + Dot + Letter/Number → Replace dot with space
+    text = re.sub(r'([a-zA-Z0-9])\.([a-zA-Z0-9])', r'\1 \2', text)
+
+    # Remove trailing dots
+    text = re.sub(r'\.+$', '', text)
+
+    return text
+
 
 def normalize_text(text: str, use_fuzzy: bool = False, expand_linguistic_variations: bool = True) -> str:
     """
     Normalizes a text string according to the project's requirements:
+    - Smart dot handling (converts dots between letters to spaces)
     - Converts to lowercase.
     - Removes leading/trailing whitespace.
     - Standardizes internal whitespace (multiple spaces to one).
@@ -51,32 +86,63 @@ def normalize_text(text: str, use_fuzzy: bool = False, expand_linguistic_variati
         # Use the enhanced fuzzy normalization
         return fuzzy_normalize_text(text)
 
-    # Standard normalization (original implementation)
-    # 1. Convert to lowercase
+    # Standard normalization (updated implementation)
+    # 1. Smart dot handling (BEFORE other processing)
+    text = smart_dot_handling(text)
+
+    # 2. Convert to lowercase
     text = text.lower()
 
-    # 2. Remove leading/trailing whitespace
+    # 3. Remove leading/trailing whitespace
     text = text.strip()
 
-    # 3. Normalize accented characters
+    # 4. Normalize accented characters
     # Decompose into base character and combining diacritical marks, then remove marks
     nfkd_form = unicodedata.normalize('NFKD', text)
     text = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
 
-    # 4. Remove common punctuation (keeps alphanumeric characters and spaces)
+    # 5. Remove common punctuation (keeps alphanumeric characters and spaces)
     # This regex will remove anything that's not a letter, number, or whitespace.
     # If specific punctuation needs to be kept or replaced differently, adjust the regex.
     text = re.sub(r'[^\w\s]', '', text)  # \w is alphanumeric + underscore
 
-    # 5. Standardize internal whitespace (multiple spaces/tabs/newlines to a single space)
+    # 6. Standardize internal whitespace (multiple spaces/tabs/newlines to a single space)
     # strip again in case regex leaves leading/trailing space
     text = re.sub(r'\s+', ' ', text).strip()
 
-    # 6. Expand linguistic variations (abbreviations, gender, plurals) if requested
+    # 7. Expand linguistic variations (abbreviations, gender, plurals) if requested
     if expand_linguistic_variations:
         text = expand_linguistic_variations_text(text)
 
     return text
+
+
+def expand_comprehensive_abbreviations(text: str) -> str:
+    """
+    Expands automotive abbreviations using the comprehensive AUTOMOTIVE_ABBR dictionary.
+    This integrates the full abbreviation dictionary into the main text processing pipeline.
+
+    Args:
+        text: Input text with potential abbreviations
+
+    Returns:
+        Text with abbreviations expanded to their full forms
+    """
+    if not isinstance(text, str) or not text.strip():
+        return text
+
+    words = text.lower().split()  # Convert to lowercase for case-insensitive matching
+    expanded_words = []
+
+    for word in words:
+        # Check if the word is in our comprehensive abbreviation dictionary
+        if word in AUTOMOTIVE_ABBR:
+            expanded_words.append(AUTOMOTIVE_ABBR[word])
+            print(f"    Comprehensive abbrev: '{word}' -> '{AUTOMOTIVE_ABBR[word]}'")
+        else:
+            expanded_words.append(word)
+
+    return " ".join(expanded_words)
 
 
 def get_noun_gender(word: str) -> str:
@@ -140,6 +206,7 @@ def get_noun_gender(word: str) -> str:
 def expand_linguistic_variations_text(text: str) -> str:
     """
     Expands linguistic variations in Spanish automotive text:
+    - Comprehensive automotive abbreviations (from AUTOMOTIVE_ABBR dictionary)
     - Context-aware abbreviations: handles 'd' and 't' based on part type
     - Gender-aware abbreviations: izq -> izquierdo/izquierda based on noun gender
     - Standard abbreviations with proper gender agreement
@@ -150,10 +217,13 @@ def expand_linguistic_variations_text(text: str) -> str:
     if not text:
         return text
 
+    # Step 1: Apply comprehensive automotive abbreviation expansion first
+    text = expand_comprehensive_abbreviations(text)
+
     words = text.split()
     expanded_words = []
 
-    # First pass: Handle special abbreviation patterns (like "D I" = "DELANTERO IZQUIERDO")
+    # Step 2: Handle special abbreviation patterns (like "D I" = "DELANTERO IZQUIERDO")
     words = handle_abbreviation_patterns(words)
 
     for i, word in enumerate(words):
