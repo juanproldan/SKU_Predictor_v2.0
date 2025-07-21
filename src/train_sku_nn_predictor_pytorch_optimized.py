@@ -38,12 +38,16 @@ VOCAB_SIZE = 10000  # Max number of words to keep in the vocabulary
 MAX_SEQUENCE_LENGTH = 30  # Reduced from 50 to 30
 EMBEDDING_DIM = 64  # Reduced from 100 to 64
 HIDDEN_DIM = 64  # Reduced from 128 to 64
-BATCH_SIZE = 128  # Increased for full dataset training
-EPOCHS = 50
+BATCH_SIZE = 256  # Optimized for overnight training
+EPOCHS = 100  # More epochs for better convergence
 LEARNING_RATE = 0.001
 VIN_BATCH_SIZE = 5000  # Process VINs in larger batches for full dataset
 # Set to a number (e.g., 50000) to use a subset of data, or None for all data
 SAMPLE_SIZE = None  # Using full dataset for production training
+
+# --- Training Mode Configuration ---
+import argparse
+TRAINING_MODE = "full"  # Default to full training, can be overridden by command line
 
 # --- Load VIN Predictor Models ---
 try:
@@ -90,27 +94,29 @@ def predict_vin_details_batch(vins):
 
         details = {"Make": "N/A", "Model Year": "N/A", "Series": "N/A"}
         try:
-            # Predict Make
-            wmi_encoded = encoder_x_vin_maker.transform(
-                np.array([[features['wmi']]]))
+            # Predict Make - Use DataFrame with proper column names
+            import pandas as pd
+            wmi_df = pd.DataFrame([[features['wmi']]], columns=['wmi'])
+            wmi_encoded = encoder_x_vin_maker.transform(wmi_df)
             if -1 not in wmi_encoded:
                 pred_encoded = model_vin_maker.predict(wmi_encoded)
                 if pred_encoded[0] != -1:
                     details['Make'] = encoder_y_vin_maker.inverse_transform(
                         pred_encoded.reshape(-1, 1))[0]
 
-            # Predict Model Year
-            year_code_encoded = encoder_x_vin_year.transform(
-                np.array([[features['year_code']]]))
+            # Predict Model Year - Use DataFrame with proper column names
+            year_df = pd.DataFrame([[features['year_code']]], columns=['year_code'])
+            year_code_encoded = encoder_x_vin_year.transform(year_df)
             if -1 not in year_code_encoded:
                 pred_encoded = model_vin_year.predict(year_code_encoded)
                 if pred_encoded[0] != -1:
                     details['Model Year'] = encoder_y_vin_year.inverse_transform(
                         pred_encoded.reshape(-1, 1))[0]
 
-            # Predict Series
-            series_features_encoded = encoder_x_vin_series.transform(
-                np.array([[features['wmi'], features['vds_full']]]))
+            # Predict Series - Use DataFrame with proper column names
+            series_df = pd.DataFrame([[features['wmi'], features['vds_full']]],
+                                   columns=['wmi', 'vds_full'])
+            series_features_encoded = encoder_x_vin_series.transform(series_df)
             if -1 not in series_features_encoded[0]:
                 pred_encoded = model_vin_series.predict(
                     series_features_encoded)
@@ -126,26 +132,55 @@ def predict_vin_details_batch(vins):
     return results
 
 
-def load_and_preprocess_data():
-    """Loads data from DB, preprocesses for NN training with optimizations."""
+def load_and_preprocess_data(incremental_mode=False, days_back=7):
+    """Loads data from DB, preprocesses for NN training with optimizations.
+
+    Args:
+        incremental_mode (bool): If True, only load recent data for incremental training
+        days_back (int): Number of days back to load for incremental training
+    """
     if not model_vin_maker:  # Check if VIN models loaded
         print("VIN detail prediction models are not available. Cannot preprocess data.")
         return None
 
     start_time = time.time()
-    print(f"Loading data from {DB_PATH}...")
+
+    if incremental_mode:
+        print(f"Loading incremental data from {DB_PATH} (last {days_back} days)...")
+        # For incremental training, load only recent data
+        # Assuming there's a timestamp column or we can use row IDs
+        conn = sqlite3.connect(DB_PATH)
+
+        # Get the latest records (assuming higher IDs are newer)
+        # This is a simple approach - in production you'd want actual timestamps
+        total_query = "SELECT COUNT(*) FROM historical_parts WHERE sku IS NOT NULL"
+        total_count = pd.read_sql_query(total_query, conn).iloc[0, 0]
+
+        # Take approximately the last week's worth of data (estimate)
+        # Assuming roughly equal distribution, take last 2% for weekly updates
+        recent_limit = max(1000, int(total_count * 0.02))  # At least 1000 records
+
+        query = f"""
+        SELECT vin_number, normalized_description, sku
+        FROM historical_parts
+        WHERE sku IS NOT NULL
+        ORDER BY id DESC
+        LIMIT {recent_limit}
+        """
+        print(f"Loading approximately {recent_limit} recent records for incremental training...")
+    else:
+        print(f"Loading full dataset from {DB_PATH}...")
+        conn = sqlite3.connect(DB_PATH)
+
+        # Optionally limit the data size for faster testing
+        if SAMPLE_SIZE:
+            query = f"SELECT vin_number, normalized_description, sku FROM historical_parts WHERE sku IS NOT NULL LIMIT {SAMPLE_SIZE}"
+        else:
+            query = "SELECT vin_number, normalized_description, sku FROM historical_parts WHERE sku IS NOT NULL"
 
     if not os.path.exists(DB_PATH):
         print(f"Error: Database file not found at {DB_PATH}")
         return None
-
-    conn = sqlite3.connect(DB_PATH)
-
-    # Optionally limit the data size for faster testing
-    if SAMPLE_SIZE:
-        query = f"SELECT vin_number, normalized_description, sku FROM historical_parts WHERE sku IS NOT NULL LIMIT {SAMPLE_SIZE}"
-    else:
-        query = "SELECT vin_number, normalized_description, sku FROM historical_parts WHERE sku IS NOT NULL"
 
     df_history = pd.read_sql_query(query, conn)
     conn.close()
@@ -336,13 +371,17 @@ class OptimizedSKUNNModel(nn.Module):
         self.embed_dropout = nn.Dropout(dropout_rate)
 
         # Bidirectional LSTM for better feature extraction
+        # Note: dropout only applies when num_layers > 1, so we use separate dropout layer
         self.lstm = nn.LSTM(
             embedding_dim,
             hidden_size,
             batch_first=True,
             bidirectional=True,
-            dropout=dropout_rate if dropout_rate > 0 else 0
+            num_layers=1  # Single layer, no internal dropout
         )
+
+        # LSTM output dropout
+        self.lstm_dropout = nn.Dropout(dropout_rate)
 
         # Attention mechanism
         self.attention = nn.Linear(hidden_size * 2, 1)
@@ -377,6 +416,7 @@ class OptimizedSKUNNModel(nn.Module):
         # Process through LSTM
         # (batch_size, seq_len, hidden_size*2)
         lstm_out, _ = self.lstm(embedded)
+        lstm_out = self.lstm_dropout(lstm_out)  # Apply dropout after LSTM
 
         # Apply attention
         attn_out = self.attention_net(lstm_out)  # (batch_size, hidden_size*2)
@@ -395,16 +435,47 @@ class OptimizedSKUNNModel(nn.Module):
         return logits
 
 
+def load_existing_model_for_incremental(model_path, cat_input_size, vocab_size, num_classes):
+    """Load existing model for incremental training."""
+    try:
+        model = OptimizedSKUNNModel(
+            cat_input_size=cat_input_size,
+            vocab_size=vocab_size,
+            embedding_dim=EMBEDDING_DIM,
+            hidden_size=HIDDEN_DIM,
+            num_classes=num_classes
+        )
+        model.load_state_dict(torch.load(model_path, map_location='cpu'))
+        print(f"Successfully loaded existing model from {model_path}")
+        return model
+    except Exception as e:
+        print(f"Error loading existing model: {e}")
+        print("Will create new model instead...")
+        return None
+
+
 # --- Main Execution ---
 if __name__ == "__main__":
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Train SKU Neural Network')
+    parser.add_argument('--mode', choices=['full', 'incremental'], default='full',
+                        help='Training mode: full (default) or incremental')
+    parser.add_argument('--days', type=int, default=7,
+                        help='Days back for incremental training (default: 7)')
+    args = parser.parse_args()
+
+    TRAINING_MODE = args.mode
+    incremental_mode = (TRAINING_MODE == 'incremental')
+
     if not model_vin_maker:  # Critical dependency check
         print("Exiting: VIN detail prediction models failed to load.")
     else:
-        print("--- Starting Optimized SKU Neural Network Predictor Training (PyTorch) ---")
+        mode_text = "Incremental" if incremental_mode else "Full"
+        print(f"--- Starting {mode_text} SKU Neural Network Predictor Training (PyTorch) ---")
         start_time = time.time()
 
         # Load and preprocess data
-        results = load_and_preprocess_data()
+        results = load_and_preprocess_data(incremental_mode=incremental_mode, days_back=args.days)
 
         if results is not None:
             X_cat, X_text, y_encoded, encoders, tokenizer, num_classes, vocab_size = results
@@ -447,37 +518,90 @@ if __name__ == "__main__":
                 "cuda" if torch.cuda.is_available() else "cpu")
             print(f"Using device: {device}")
 
-            # Create optimized model
-            model = OptimizedSKUNNModel(
-                cat_input_size=X_cat_train.shape[1],
-                vocab_size=vocab_size,
-                embedding_dim=EMBEDDING_DIM,
-                hidden_size=HIDDEN_DIM,
-                num_classes=num_classes
-            ).to(device)
+            # Create or load model based on training mode
+            if incremental_mode:
+                # Try to load existing model for incremental training
+                existing_model_path = os.path.join(SKU_NN_MODEL_DIR, 'sku_nn_model_pytorch_optimized.pth')
+                model = load_existing_model_for_incremental(
+                    existing_model_path,
+                    X_cat_train.shape[1],
+                    vocab_size,
+                    num_classes
+                )
+
+                if model is None:
+                    print("Creating new model for incremental training...")
+                    model = OptimizedSKUNNModel(
+                        cat_input_size=X_cat_train.shape[1],
+                        vocab_size=vocab_size,
+                        embedding_dim=EMBEDDING_DIM,
+                        hidden_size=HIDDEN_DIM,
+                        num_classes=num_classes
+                    )
+                else:
+                    print("Using existing model for incremental training...")
+            else:
+                # Create new model for full training
+                print("Creating new model for full training...")
+                model = OptimizedSKUNNModel(
+                    cat_input_size=X_cat_train.shape[1],
+                    vocab_size=vocab_size,
+                    embedding_dim=EMBEDDING_DIM,
+                    hidden_size=HIDDEN_DIM,
+                    num_classes=num_classes
+                )
+
+            model = model.to(device)
+
+            # Print model architecture summary
+            total_params = sum(p.numel() for p in model.parameters())
+            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            print(f"\nModel Architecture Summary:")
+            print(f"  Total parameters: {total_params:,}")
+            print(f"  Trainable parameters: {trainable_params:,}")
+            print(f"  Model size: ~{total_params * 4 / 1024 / 1024:.1f} MB")
 
             # Define loss function and optimizer
             criterion = nn.CrossEntropyLoss()
-            optimizer = optim.Adam(
-                model.parameters(), lr=LEARNING_RATE, weight_decay=1e-5)
 
-            # Learning rate scheduler
+            # Adjust learning rate for incremental training
+            if incremental_mode:
+                # Use lower learning rate for incremental training to avoid catastrophic forgetting
+                learning_rate = LEARNING_RATE * 0.1  # 10x lower learning rate
+                epochs = max(10, EPOCHS // 5)  # Fewer epochs for incremental
+                print(f"Incremental training: Using LR={learning_rate}, Epochs={epochs}")
+            else:
+                learning_rate = LEARNING_RATE
+                epochs = EPOCHS
+                print(f"Full training: Using LR={learning_rate}, Epochs={epochs}")
+
+            optimizer = optim.Adam(
+                model.parameters(), lr=learning_rate, weight_decay=1e-5)
+
+            # Learning rate scheduler with verbose output
             scheduler = ReduceLROnPlateau(
-                optimizer, mode='min', factor=0.5, patience=5)
+                optimizer, mode='min', factor=0.5, patience=8, verbose=True)
 
             # Training loop with early stopping
-            print("\n--- Training the Optimized SKU NN Model ---")
+            mode_text = "Incremental" if incremental_mode else "Full"
+            print(f"\n--- Training the Optimized SKU NN Model ({mode_text} Mode) ---")
             print(
                 f"Training on {len(train_loader.dataset)} samples, validating on {len(val_loader.dataset)} samples")
             print(
-                f"Using device: {device}, batch size: {BATCH_SIZE}, max epochs: {EPOCHS}")
+                f"Using device: {device}, batch size: {BATCH_SIZE}, max epochs: {epochs}")
 
             best_val_loss = float('inf')
-            patience = 10
+            # Increased patience for overnight training to allow better convergence
+            patience = 20 if not incremental_mode else 10  # More patience for full training
             patience_counter = 0
+            min_improvement = 0.001  # Minimum improvement threshold
             training_start_time = time.time()
 
-            for epoch in range(EPOCHS):
+            # Initialize model path variables
+            model_path = ""
+            default_model_path = ""
+
+            for epoch in range(epochs):
                 epoch_start_time = time.time()
 
                 # Training phase
@@ -536,16 +660,23 @@ if __name__ == "__main__":
                 val_loss = val_loss / len(val_loader.dataset)
                 val_acc = correct / total
 
-                # Update learning rate
-                scheduler.step(val_loss)
-
                 epoch_time = time.time() - epoch_start_time
-                print(f"Epoch {epoch+1}/{EPOCHS} [{epoch_time:.1f}s], "
-                      f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, "
-                      f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}")
 
-                # Early stopping
-                if val_loss < best_val_loss:
+                # Enhanced progress reporting
+                elapsed_time = time.time() - training_start_time
+                eta_seconds = (elapsed_time / (epoch + 1)) * (epochs - epoch - 1)
+                eta_hours, eta_remainder = divmod(eta_seconds, 3600)
+                eta_minutes = eta_remainder // 60
+
+                print(f"Epoch {epoch+1}/{epochs} [{epoch_time:.1f}s], "
+                          f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, "
+                          f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}")
+                print(f"  Progress: {((epoch+1)/epochs)*100:.1f}% | "
+                      f"ETA: {int(eta_hours)}h {int(eta_minutes)}m | "
+                      f"Best Val Acc: {(1-best_val_loss):.4f}")
+
+                # Early stopping with minimum improvement threshold
+                if val_loss < (best_val_loss - min_improvement):
                     best_val_loss = val_loss
                     patience_counter = 0
                     # Save the best model with timestamp
@@ -569,6 +700,9 @@ if __name__ == "__main__":
                         print(
                             f"Early stopping triggered after {epoch+1} epochs")
                         break
+
+                # Step the learning rate scheduler
+                scheduler.step(val_loss)
 
             total_time = time.time() - start_time
             hours, remainder = divmod(total_time, 3600)

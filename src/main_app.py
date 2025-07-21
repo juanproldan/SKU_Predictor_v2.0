@@ -14,21 +14,29 @@ import re  # For VIN validation
 import torch  # For PyTorch
 # Import our PyTorch model implementation
 try:
+    # Try relative imports first (for PyInstaller)
     from models.sku_nn_pytorch import load_model, predict_sku
-except ImportError:
-    # Fallback for direct execution
-    from .models.sku_nn_pytorch import load_model, predict_sku
-# Assuming text_utils and train_vin_predictor are in the same directory or src is in PYTHONPATH
-try:
     from utils.text_utils import normalize_text
     from utils.dummy_tokenizer import DummyTokenizer
-    # Import feature extraction and year decoding from the training script
     from train_vin_predictor import extract_vin_features, decode_year
 except ImportError:
-    # Fallback for direct execution if src is not in path (e.g. during development)
-    from .utils.text_utils import normalize_text
-    from .utils.dummy_tokenizer import DummyTokenizer
-    from .train_vin_predictor import extract_vin_features, decode_year
+    try:
+        # Fallback for package execution
+        from .models.sku_nn_pytorch import load_model, predict_sku
+        from .utils.text_utils import normalize_text
+        from .utils.dummy_tokenizer import DummyTokenizer
+        from .train_vin_predictor import extract_vin_features, decode_year
+    except ImportError:
+        # Final fallback - add src to path and try again
+        import sys
+        import os
+        src_path = os.path.dirname(os.path.abspath(__file__))
+        if src_path not in sys.path:
+            sys.path.insert(0, src_path)
+        from models.sku_nn_pytorch import load_model, predict_sku
+        from utils.text_utils import normalize_text
+        from utils.dummy_tokenizer import DummyTokenizer
+        from train_vin_predictor import extract_vin_features, decode_year
 
 import sys
 
@@ -256,6 +264,97 @@ class FixacarApp:
 
         expanded_text = ' '.join(expanded_words)
         return expanded_text
+
+    def calculate_frequency_based_confidence(self, frequency: int, prediction_type: str = "DB") -> float:
+        """
+        Calculate confidence based on absolute frequency of SKU occurrences in database.
+
+        This replaces the old relative confidence calculation that incorrectly gave high confidence
+        to single occurrences. Now confidence is based on actual frequency thresholds.
+
+        Confidence Scale:
+        - 1-2 occurrences: 0.05-0.1 (very low - likely supplier errors)
+        - 3-9 occurrences: 0.1-0.2 (low - insufficient data)
+        - 10-19 occurrences: 0.2-0.4 (medium-low - some confidence)
+        - 20+ occurrences: 0.4-0.7 (reliable - good confidence)
+
+        Args:
+            frequency: Number of times this SKU appears in database for this combination
+            prediction_type: Type of prediction for confidence adjustment
+
+        Returns:
+            Confidence score between 0.05 and 0.7
+        """
+        if frequency < 3:
+            # Very low confidence for rare occurrences (likely errors)
+            base_confidence = 0.05 + 0.025 * frequency  # 0.05-0.1 range
+        elif frequency < 10:
+            # Low confidence for insufficient data
+            base_confidence = 0.1 + 0.01 * frequency  # 0.1-0.19 range
+        elif frequency < 20:
+            # Medium-low confidence for moderate data
+            base_confidence = 0.2 + 0.01 * frequency  # 0.2-0.39 range
+        else:
+            # Good confidence for reliable data (20+ occurrences)
+            # Cap at 50+ occurrences to avoid overconfidence
+            capped_frequency = min(frequency, 50)
+            base_confidence = 0.4 + 0.006 * capped_frequency  # 0.4-0.7 range
+
+        # Slight adjustment based on prediction type
+        if prediction_type == "DB (4-param Exact)":
+            multiplier = 1.0  # Full confidence for exact matches
+        elif prediction_type.startswith("DB (Unified Fuzzy"):
+            multiplier = 0.9  # Slightly lower for fuzzy matches
+        elif prediction_type.startswith("DB (3-param"):
+            multiplier = 0.8  # Lower for 3-parameter matches
+        else:
+            multiplier = 0.7  # Lowest for fallback matches
+
+        final_confidence = round(base_confidence * multiplier, 3)
+
+        print(f"    Frequency-based confidence: {frequency} occurrences → {final_confidence} confidence")
+        return final_confidence
+
+    def apply_consensus_logic(self, sku_frequency_pairs: list, min_consensus_ratio: float = 0.6) -> list:
+        """
+        Apply consensus logic to filter out minority/outlier SKUs.
+
+        If we have: 25 × "SKU123", 3 × "SKU456", 1 × "SKU789"
+        Only return SKUs that represent significant consensus, not obvious errors.
+
+        Args:
+            sku_frequency_pairs: List of (sku, frequency) tuples
+            min_consensus_ratio: Minimum ratio of total occurrences for a SKU to be considered
+
+        Returns:
+            Filtered list of (sku, frequency) tuples with only consensus SKUs
+        """
+        if not sku_frequency_pairs:
+            return []
+
+        total_occurrences = sum(freq for _, freq in sku_frequency_pairs)
+
+        # Sort by frequency (highest first)
+        sorted_pairs = sorted(sku_frequency_pairs, key=lambda x: x[1], reverse=True)
+
+        consensus_skus = []
+        for sku, frequency in sorted_pairs:
+            ratio = frequency / total_occurrences
+
+            print(f"    Consensus analysis: {sku} appears {frequency}/{total_occurrences} times ({ratio:.2%})")
+
+            # Include SKUs that meet minimum consensus threshold
+            if ratio >= min_consensus_ratio:
+                consensus_skus.append((sku, frequency))
+                print(f"      ✅ Included: Strong consensus ({ratio:.2%} ≥ {min_consensus_ratio:.1%})")
+            elif frequency >= 20:  # Always include high-frequency SKUs even if ratio is low
+                consensus_skus.append((sku, frequency))
+                print(f"      ✅ Included: High frequency ({frequency} ≥ 20 occurrences)")
+            else:
+                print(f"      ❌ Excluded: Weak consensus ({ratio:.2%} < {min_consensus_ratio:.1%}, freq: {frequency})")
+
+        print(f"    Consensus result: {len(consensus_skus)}/{len(sorted_pairs)} SKUs passed consensus filter")
+        return consensus_skus
 
     def unified_text_preprocessing(self, text: str) -> str:
         """
@@ -926,9 +1025,10 @@ class FixacarApp:
                    "Series": "N/A", "Model": "N/A", "Body Class": "N/A"}
 
         try:
-            # Predict Maker
-            wmi_encoded = encoder_x_maker.transform(
-                np.array([[features['wmi']]]))
+            # Predict Maker - Use DataFrame with proper column names
+            import pandas as pd
+            wmi_df = pd.DataFrame([[features['wmi']]], columns=['wmi'])
+            wmi_encoded = encoder_x_maker.transform(wmi_df)
             # Check for unknown category before prediction
             if -1 in wmi_encoded:
                 details['Make'] = "Unknown (WMI)"
@@ -946,9 +1046,9 @@ class FixacarApp:
                 else:  # Should not happen if input was known, but handle defensively
                     details['Make'] = "Unknown (Prediction)"
 
-            # Predict Year
-            year_code_encoded = encoder_x_year.transform(
-                np.array([[features['year_code']]]))
+            # Predict Year - Use DataFrame with proper column names
+            year_df = pd.DataFrame([[features['year_code']]], columns=['year_code'])
+            year_code_encoded = encoder_x_year.transform(year_df)
             if -1 in year_code_encoded:
                 details['Model Year'] = "Unknown (Code)"
             else:
@@ -966,9 +1066,10 @@ class FixacarApp:
                     details['Model Year'] = str(decode_year(features['year_code'])) if decode_year(
                         features['year_code']) else "Unknown (Code)"
 
-            # Predict Series
-            series_features_encoded = encoder_x_series.transform(
-                np.array([[features['wmi'], features['vds_full']]]))
+            # Predict Series - Use DataFrame with proper column names
+            series_df = pd.DataFrame([[features['wmi'], features['vds_full']]],
+                                   columns=['wmi', 'vds_full'])
+            series_features_encoded = encoder_x_series.transform(series_df)
             # Check if either feature was unknown
             if -1 in series_features_encoded[0]:
                 details['Series'] = "Unknown (VDS/WMI)"
@@ -1034,7 +1135,14 @@ class FixacarApp:
     def _aggregate_sku_suggestions(self, suggestions: dict, new_sku: str, new_confidence: float, new_source: str) -> dict:
         """
         Aggregates SKU suggestions, handling duplicates by keeping the highest confidence.
-        Also tracks all sources for transparency.
+        Also tracks all sources for transparency and applies consensus-based confidence adjustment.
+
+        Confidence Rules:
+        - Single source (Maestro only): Max 0.90 confidence
+        - Single source (NN only): Max 0.85 confidence
+        - Single source (DB only): Max 0.70 confidence
+        - Multiple sources (Maestro + NN): Can reach 1.00 confidence
+        - Multiple sources (any combination): Bonus for consensus
         """
         if not self._is_valid_sku(new_sku):
             return suggestions
@@ -1044,31 +1152,93 @@ class FixacarApp:
             existing = suggestions[new_sku]
             existing_conf = existing["confidence"]
             existing_source = existing["source"]
+            existing_all_sources = existing.get("all_sources", existing_source)
 
-            if new_confidence > existing_conf:
-                # New confidence is higher - update
-                suggestions[new_sku] = {
-                    "confidence": new_confidence,
-                    "source": new_source,
-                    "all_sources": f"{existing_source}, {new_source}",
-                    "best_confidence": new_confidence
-                }
-                print(f"    Updated {new_sku}: {existing_conf:.3f} -> {new_confidence:.3f} (Sources: {existing_source} + {new_source})")
-            else:
-                # Keep existing confidence but track additional source
-                suggestions[new_sku]["all_sources"] = f"{existing_source}, {new_source}"
-                print(f"    Kept {new_sku}: {existing_conf:.3f} (Added source: {new_source})")
-        else:
-            # New SKU - add it
+            # Track all sources
+            all_sources_list = existing_all_sources.split(", ") if existing_all_sources else [existing_source]
+            if new_source not in all_sources_list:
+                all_sources_list.append(new_source)
+
+            combined_sources = ", ".join(all_sources_list)
+
+            # Calculate consensus-adjusted confidence
+            adjusted_confidence = self._calculate_consensus_confidence(
+                max(existing_conf, new_confidence), all_sources_list
+            )
+
+            # Update with consensus-adjusted confidence
             suggestions[new_sku] = {
-                "confidence": new_confidence,
+                "confidence": adjusted_confidence,
+                "source": new_source if new_confidence > existing_conf else existing["source"],
+                "all_sources": combined_sources,
+                "best_confidence": max(existing_conf, new_confidence),
+                "source_count": len(all_sources_list)
+            }
+            print(f"    🔄 Consensus update {new_sku}: {max(existing_conf, new_confidence):.3f} -> {adjusted_confidence:.3f} (Sources: {combined_sources})")
+        else:
+            # New SKU - add it with single-source confidence adjustment
+            adjusted_confidence = self._calculate_consensus_confidence(new_confidence, [new_source])
+            suggestions[new_sku] = {
+                "confidence": adjusted_confidence,
                 "source": new_source,
                 "all_sources": new_source,
-                "best_confidence": new_confidence
+                "best_confidence": new_confidence,
+                "source_count": 1
             }
-            print(f"    Added {new_sku}: {new_confidence:.3f} ({new_source})")
+            if adjusted_confidence != new_confidence:
+                print(f"    📉 Single-source adjustment {new_sku}: {new_confidence:.3f} -> {adjusted_confidence:.3f} ({new_source})")
 
         return suggestions
+
+    def _calculate_consensus_confidence(self, base_confidence: float, sources: list) -> float:
+        """
+        Calculate consensus-adjusted confidence based on prediction sources.
+
+        Rules:
+        - Single source (Maestro only): Max 0.90 confidence
+        - Single source (NN only): Max 0.85 confidence
+        - Single source (DB only): Max 0.70 confidence
+        - Multiple sources (Maestro + NN): Can reach 1.00 confidence
+        - Multiple sources (any combination): Bonus for consensus
+
+        Args:
+            base_confidence: Original confidence score
+            sources: List of prediction sources
+
+        Returns:
+            Adjusted confidence score
+        """
+        if len(sources) == 1:
+            # Single source - apply caps
+            source = sources[0]
+            if "Maestro" in source:
+                return min(base_confidence, 0.90)
+            elif "SKU-NN" in source or "NN" in source:
+                return min(base_confidence, 0.85)
+            elif "DB" in source:
+                return min(base_confidence, 0.70)
+            else:
+                return min(base_confidence, 0.80)  # Default single source cap
+
+        else:
+            # Multiple sources - consensus bonus
+            has_maestro = any("Maestro" in source for source in sources)
+            has_nn = any("SKU-NN" in source or "NN" in source for source in sources)
+            has_db = any("DB" in source for source in sources)
+
+            # Maestro + NN consensus can reach 1.00
+            if has_maestro and has_nn:
+                # Ensure Maestro + NN can reach 1.00 by using max of single-source caps + bonus
+                maestro_cap = 0.90
+                nn_cap = 0.85
+                consensus_bonus = 0.15  # Larger bonus to ensure 1.00 is reachable
+                return min(max(maestro_cap, nn_cap) + consensus_bonus, 1.00)
+
+            # Other multi-source combinations get smaller bonus
+            elif len(sources) >= 2:
+                return min(base_confidence + 0.05, 0.95)  # Increased bonus, capped at 0.95
+
+            return base_confidence
 
     def _process_parts_and_continue_search(self):
         """Processes part descriptions and triggers the search and display."""
@@ -1341,17 +1511,26 @@ class FixacarApp:
                             FROM historical_parts
                             WHERE vin_make = ? AND vin_year = ? AND vin_series = ? AND normalized_description = ?
                             GROUP BY sku
+                            ORDER BY COUNT(*) DESC
                         """, (vin_make, vin_year, vin_series, abbreviated_desc))
                         results = cursor.fetchall()
-                        total_matches = sum(row[1] for row in results)
-                        for sku, frequency in results:
-                            if sku and sku.strip():
-                                confidence = round(
-                                    0.5 + 0.4 * (frequency / total_matches), 3) if total_matches > 0 else 0.5
-                                suggestions = self._aggregate_sku_suggestions(
-                                    suggestions, sku, confidence, f"DB (4-param Exact)")
-                                print(
-                                    f"    Found in DB (4-param Exact): {sku} (Freq: {frequency}, Conf: {confidence})")
+
+                        if results:
+                            print(f"    Found {len(results)} unique SKUs in DB (4-param Exact)")
+
+                            # Apply consensus logic to filter out minority/outlier SKUs
+                            consensus_skus = self.apply_consensus_logic(results, min_consensus_ratio=0.6)
+
+                            # Process consensus SKUs with frequency-based confidence
+                            for sku, frequency in consensus_skus:
+                                if sku and sku.strip():
+                                    confidence = self.calculate_frequency_based_confidence(frequency, "DB (4-param Exact)")
+                                    suggestions = self._aggregate_sku_suggestions(
+                                        suggestions, sku, confidence, f"DB (4-param Exact)")
+                                    print(
+                                        f"    ✅ Found in DB (4-param Exact): {sku} (Freq: {frequency}, Conf: {confidence})")
+                        else:
+                            print("    No exact matches found in DB (4-param)")
 
                         # STEP 2: If no exact match, try fuzzy series matching with abbreviated description
                         if not suggestions:
@@ -1361,17 +1540,26 @@ class FixacarApp:
                                 FROM historical_parts
                                 WHERE vin_make = ? AND vin_year = ? AND vin_series LIKE ? AND normalized_description = ?
                                 GROUP BY sku
+                                ORDER BY COUNT(*) DESC
                             """, (vin_make, vin_year, f'%{vin_series}%', abbreviated_desc))
                             results = cursor.fetchall()
-                            total_matches = sum(row[1] for row in results)
-                            for sku, frequency in results:
-                                if sku and sku.strip():
-                                    confidence = round(
-                                        0.4 + 0.3 * (frequency / total_matches), 3) if total_matches > 0 else 0.4
-                                    suggestions = self._aggregate_sku_suggestions(
-                                        suggestions, sku, confidence, f"DB (Fuzzy Series + Abbreviated)")
-                                    print(
-                                        f"    Found in DB (Fuzzy Series + Abbreviated): {sku} (Freq: {frequency}, Conf: {confidence})")
+
+                            if results:
+                                print(f"    Found {len(results)} unique SKUs in DB (Fuzzy Series + Abbreviated)")
+
+                                # Apply consensus logic to filter out minority/outlier SKUs
+                                consensus_skus = self.apply_consensus_logic(results, min_consensus_ratio=0.6)
+
+                                # Process consensus SKUs with frequency-based confidence
+                                for sku, frequency in consensus_skus:
+                                    if sku and sku.strip():
+                                        confidence = self.calculate_frequency_based_confidence(frequency, "DB (Fuzzy Series)")
+                                        suggestions = self._aggregate_sku_suggestions(
+                                            suggestions, sku, confidence, f"DB (Fuzzy Series + Abbreviated)")
+                                        print(
+                                            f"    ✅ Found in DB (Fuzzy Series + Abbreviated): {sku} (Freq: {frequency}, Conf: {confidence})")
+                            else:
+                                print("    No fuzzy series + abbreviated matches found in DB")
 
                         # STEP 2b: If still no match, try fuzzy series matching with original description
                         if not suggestions:
@@ -1431,6 +1619,9 @@ class FixacarApp:
                             preprocessed_original = self.unified_text_preprocessing(original_desc)
                             preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
 
+                            # Group results by SKU to apply consensus logic
+                            sku_matches = {}  # sku -> [(similarity, frequency, db_desc, match_type)]
+
                             # Apply fuzzy matching with unified preprocessing
                             for sku, db_desc, frequency in all_results:
                                 if sku and sku.strip() and db_desc:
@@ -1441,21 +1632,35 @@ class FixacarApp:
                                     similarity_orig = self._calculate_description_similarity(preprocessed_original, preprocessed_db_desc)
                                     similarity_exp = self._calculate_description_similarity(preprocessed_expanded, preprocessed_db_desc)
 
-                                    # Use the better similarity score with higher confidence for unified preprocessing
+                                    # Use the better similarity score
                                     if similarity_orig >= similarity_exp and similarity_orig >= 0.7:
-                                        confidence = round(0.4 + 0.3 * similarity_orig, 3)  # Higher confidence for unified preprocessing
-                                        suggestions = self._aggregate_sku_suggestions(
-                                            suggestions, sku, confidence, f"DB (Unified Fuzzy Orig: {similarity_orig:.2f})")
-                                        print(
-                                            f"    Found in DB (Unified Fuzzy Orig): {sku} (Sim: {similarity_orig:.2f}, Freq: {frequency}, Conf: {confidence})")
-                                        print(f"      Input: '{preprocessed_original}' vs DB: '{preprocessed_db_desc}'")
+                                        if sku not in sku_matches:
+                                            sku_matches[sku] = []
+                                        sku_matches[sku].append((similarity_orig, frequency, preprocessed_db_desc, "original"))
                                     elif similarity_exp >= 0.7:
-                                        confidence = round(0.35 + 0.25 * similarity_exp, 3)  # Higher confidence for unified preprocessing
-                                        suggestions = self._aggregate_sku_suggestions(
-                                            suggestions, sku, confidence, f"DB (Unified Fuzzy Exp: {similarity_exp:.2f})")
-                                        print(
-                                            f"    Found in DB (Unified Fuzzy Exp): {sku} (Sim: {similarity_exp:.2f}, Freq: {frequency}, Conf: {confidence})")
-                                        print(f"      Input: '{preprocessed_expanded}' vs DB: '{preprocessed_db_desc}'")
+                                        if sku not in sku_matches:
+                                            sku_matches[sku] = []
+                                        sku_matches[sku].append((similarity_exp, frequency, preprocessed_db_desc, "expanded"))
+
+                            # Process SKU matches with frequency-based confidence and consensus logic
+                            for sku, matches in sku_matches.items():
+                                # Sum frequencies for this SKU across all matching descriptions
+                                total_frequency = sum(match[1] for match in matches)
+                                best_match = max(matches, key=lambda x: x[0])  # Best similarity
+                                similarity, frequency, db_desc, match_type = best_match
+
+                                # Use frequency-based confidence instead of similarity-based
+                                confidence = self.calculate_frequency_based_confidence(total_frequency, "DB (Unified Fuzzy)")
+
+                                # Adjust confidence based on similarity quality
+                                similarity_bonus = (similarity - 0.7) * 0.1  # Up to 0.03 bonus for perfect similarity
+                                final_confidence = round(confidence + similarity_bonus, 3)
+
+                                suggestions = self._aggregate_sku_suggestions(
+                                    suggestions, sku, final_confidence, f"DB (Unified Fuzzy {match_type.title()}: {similarity:.2f})")
+                                print(
+                                    f"    ✅ Found in DB (Unified Fuzzy {match_type.title()}): {sku} (Sim: {similarity:.2f}, Total Freq: {total_frequency}, Conf: {final_confidence})")
+                                print(f"      Input: '{preprocessed_original if match_type == 'original' else preprocessed_expanded}' vs DB: '{db_desc}'")
 
                     except Exception as db_err:
                         print(
@@ -1482,6 +1687,9 @@ class FixacarApp:
                         preprocessed_original = self.unified_text_preprocessing(original_desc)
                         preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
 
+                        # Group results by SKU to apply consensus logic for 3-param search
+                        sku_matches = {}  # sku -> [(similarity, frequency, db_desc, match_type)]
+
                         # Apply fuzzy description matching with unified preprocessing
                         for sku, db_desc, frequency in results:
                             if sku and sku.strip() and db_desc:
@@ -1491,19 +1699,44 @@ class FixacarApp:
                                 similarity_orig = self._calculate_description_similarity(preprocessed_original, preprocessed_db_desc)
                                 similarity_exp = self._calculate_description_similarity(preprocessed_expanded, preprocessed_db_desc)
 
-                                # Use the better similarity score with higher confidence for unified preprocessing
+                                # Use the better similarity score (lower threshold for 3-param fallback)
                                 if similarity_orig >= similarity_exp and similarity_orig >= 0.6:
-                                    confidence = round(0.3 + 0.3 * similarity_orig, 3)  # Higher confidence for unified preprocessing
-                                    suggestions = self._aggregate_sku_suggestions(
-                                        suggestions, sku, confidence, f"DB (3-param Unified Orig: {similarity_orig:.2f})")
-                                    print(
-                                        f"    Found in DB (3-param Unified Orig): {sku} (Sim: {similarity_orig:.2f}, Freq: {frequency}, Conf: {confidence})")
+                                    if sku not in sku_matches:
+                                        sku_matches[sku] = []
+                                    sku_matches[sku].append((similarity_orig, frequency, preprocessed_db_desc, "original"))
                                 elif similarity_exp >= 0.6:
-                                    confidence = round(0.25 + 0.25 * similarity_exp, 3)  # Higher confidence for unified preprocessing
+                                    if sku not in sku_matches:
+                                        sku_matches[sku] = []
+                                    sku_matches[sku].append((similarity_exp, frequency, preprocessed_db_desc, "expanded"))
+
+                        # Apply consensus logic to 3-param results (more lenient for fallback)
+                        if sku_matches:
+                            # Convert to frequency pairs for consensus analysis
+                            sku_frequency_pairs = []
+                            for sku, matches in sku_matches.items():
+                                total_frequency = sum(match[1] for match in matches)
+                                sku_frequency_pairs.append((sku, total_frequency))
+
+                            # Apply consensus logic with lower threshold for fallback
+                            consensus_skus = self.apply_consensus_logic(sku_frequency_pairs, min_consensus_ratio=0.4)
+
+                            # Process consensus SKUs
+                            for sku, total_frequency in consensus_skus:
+                                if sku in sku_matches:
+                                    best_match = max(sku_matches[sku], key=lambda x: x[0])  # Best similarity
+                                    similarity, frequency, db_desc, match_type = best_match
+
+                                    # Use frequency-based confidence for 3-param fallback
+                                    confidence = self.calculate_frequency_based_confidence(total_frequency, "DB (3-param)")
+
+                                    # Small similarity bonus for 3-param fallback
+                                    similarity_bonus = (similarity - 0.6) * 0.05  # Up to 0.02 bonus
+                                    final_confidence = round(confidence + similarity_bonus, 3)
+
                                     suggestions = self._aggregate_sku_suggestions(
-                                        suggestions, sku, confidence, f"DB (3-param Unified Exp: {similarity_exp:.2f})")
+                                        suggestions, sku, final_confidence, f"DB (3-param Unified {match_type.title()}: {similarity:.2f})")
                                     print(
-                                        f"    Found in DB (3-param Unified Exp): {sku} (Sim: {similarity_exp:.2f}, Freq: {frequency}, Conf: {confidence})")
+                                        f"    ✅ Found in DB (3-param Unified {match_type.title()}): {sku} (Sim: {similarity:.2f}, Total Freq: {total_frequency}, Conf: {final_confidence})")
 
                         # STEP 2: If still no results, try fuzzy series + fuzzy description
                         if not suggestions:
@@ -1704,10 +1937,30 @@ class FixacarApp:
                 part_frame.config(width=200)
 
                 if suggestions_list:
+                    # Check for auto-preselection (1.00 confidence)
+                    auto_preselect_sku = None
+                    top_suggestion = suggestions_list[0] if suggestions_list else None
+                    if top_suggestion:
+                        top_sku, top_info = top_suggestion
+                        top_confidence = top_info.get('confidence', 0)
+                        if top_confidence >= 1.00:
+                            auto_preselect_sku = top_sku
+                            print(f"🎯 Auto-preselecting {top_sku} for '{original_desc}' (Confidence: {top_confidence:.2f})")
+
                     self.selection_vars[original_desc] = tk.StringVar(
-                        value=None)
+                        value=auto_preselect_sku)  # Auto-preselect if 1.00 confidence
                     self.manual_sku_vars = getattr(self, 'manual_sku_vars', {})
                     self.manual_sku_vars[original_desc] = tk.StringVar()
+
+                    # Add preselection indicator if auto-preselected
+                    if auto_preselect_sku:
+                        preselect_label = ttk.Label(
+                            part_frame,
+                            text="🎯 Auto-selected (1.00 confidence) - You can change this selection:",
+                            foreground="green",
+                            font=("", 9, "italic")
+                        )
+                        preselect_label.pack(anchor="w", padx=5, pady=2)
 
                     ttk.Separator(part_frame, orient='horizontal').pack(
                         fill='x', pady=5)

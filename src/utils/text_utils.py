@@ -159,7 +159,9 @@ def expand_linguistic_variations_text(text: str) -> str:
     for i, word in enumerate(words):
         # Handle context-dependent single-letter abbreviations
         if word in ['d', 't'] and i > 0:
-            expanded_word = expand_context_dependent_abbreviation(word, words[i-1])
+            # Find the main noun for context, not just the previous word
+            context_word = find_main_noun_for_context(words, i)
+            expanded_word = expand_context_dependent_abbreviation(word, context_word)
         # Handle gender-dependent abbreviations AND full words that need gender agreement
         elif word in ['i', 'iz', 'izq', 'der', 'dere', 'derec', 'derech', 'del', 'delan', 'delant', 'delante', 'tra', 'tras', 'trase', 'traser',
                      'izquierdo', 'izquierda', 'derecho', 'derecha', 'delantero', 'delantera', 'trasero', 'trasera']:
@@ -171,6 +173,41 @@ def expand_linguistic_variations_text(text: str) -> str:
         expanded_words.append(expanded_word)
 
     return ' '.join(expanded_words)
+
+
+def find_main_noun_for_context(words: list, current_index: int) -> str:
+    """
+    Finds the main noun that should provide context for abbreviation expansion.
+
+    For phrases like "GUIA LATERAL D", we want "GUIA" (the main noun), not "LATERAL" (adjective).
+
+    Args:
+        words: List of words in the phrase
+        current_index: Index of the current abbreviation being processed
+
+    Returns:
+        The main noun that should provide context
+    """
+    if current_index <= 0:
+        return ""
+
+    # Define common automotive adjectives that are not main nouns
+    adjectives = {
+        'lateral', 'superior', 'inferior', 'central', 'medio', 'exterior', 'interior',
+        'plastico', 'metalico', 'cromado', 'negro', 'blanco', 'transparente',
+        'grande', 'pequeno', 'largo', 'corto', 'ancho', 'estrecho'
+    }
+
+    # Look backwards from current position to find the main noun
+    for i in range(current_index - 1, -1, -1):
+        word = words[i].lower()
+
+        # Skip adjectives and look for the main noun
+        if word not in adjectives:
+            return word
+
+    # Fallback to previous word if no main noun found
+    return words[current_index - 1] if current_index > 0 else ""
 
 
 def handle_abbreviation_patterns(words: list) -> list:
@@ -414,7 +451,9 @@ def expand_context_dependent_abbreviation(abbrev: str, context_word: str) -> str
         # Parts with LEFT/RIGHT positioning (d = derecha, i = izquierda)
         'lateral_parts': {
             'espejo', 'espejos', 'guardafango', 'guardafangos',
-            'guardabarro', 'guardabarros', 'puerta', 'puertas'
+            'guardabarro', 'guardabarros', 'puerta', 'puertas',
+            'farola', 'farolas', 'faro', 'faros',  # FIXED: Headlights are primarily LEFT/RIGHT positioned
+            'guia', 'guias'  # FIXED: GUIA is a lateral part (left/right positioning)
         },
 
         # Parts with FRONT/REAR positioning (d = delantero, t = trasero)
@@ -423,44 +462,53 @@ def expand_context_dependent_abbreviation(abbrev: str, context_word: str) -> str
             'traviesa', 'traviesas', 'refuerzo', 'refuerzos'
         },
 
-        # Special case: Lights can have both front/rear AND left/right
-        # For compound light descriptions, prioritize front/rear
-        'light_parts_frontrear': {
-            'luz', 'luces', 'farola', 'farolas', 'faro', 'faros'
+        # Special case: Compound light descriptions where context matters
+        # e.g., "luz antiniebla delantera" vs "farola derecha"
+        'compound_light_parts': {
+            'luz', 'luces'  # Only generic "luz" needs context analysis
         }
     }
 
     # Determine part category with enhanced context analysis
     part_category = None
 
-    # Check for compound light descriptions (e.g., "luz antiniebla")
-    # In these cases, 'd' typically means 'delantera' (front)
-    if context_word in part_categories['light_parts_frontrear']:
-        # Look at the full context to determine if it's a compound light description
-        # This is a simplified approach - in a full implementation, we'd analyze the full text
-        part_category = 'longitudinal_parts'  # Treat lights as front/rear by default
-    else:
-        # Standard category detection
-        for category, parts in part_categories.items():
-            if context_word in parts:
-                part_category = category
-                break
+    # Standard category detection - check all categories
+    for category, parts in part_categories.items():
+        if context_word in parts:
+            part_category = category
+            break
 
-    # Expand based on context
+    # Special handling for compound light descriptions (e.g., "luz antiniebla")
+    # Only generic "luz" needs special context analysis, not specific lights like "farola"
+    if context_word in part_categories.get('compound_light_parts', set()):
+        # For generic "luz", we need more context to determine if it's front/rear or left/right
+        # Default to front/rear for compound light descriptions
+        part_category = 'longitudinal_parts'
+
+    # Expand based on context with proper gender agreement
     if abbrev == 'd':
         if part_category == 'lateral_parts':
-            return 'derecha'  # espejo d = espejo derecha
+            # Apply gender agreement for lateral positioning (derecho/derecha)
+            gender = get_noun_gender(context_word)
+            return 'derecho' if gender == 'masculine' else 'derecha'
         elif part_category == 'longitudinal_parts':
-            return 'delantero'  # paragolpes d = paragolpes delantero, luz d = luz delantera
-        elif part_category == 'light_parts_frontrear':
-            return 'delantera'  # luz d = luz delantera (for compound descriptions)
+            # Apply gender agreement for longitudinal positioning (delantero/delantera)
+            gender = get_noun_gender(context_word)
+            return 'delantero' if gender == 'masculine' else 'delantera'
         else:
-            # Default to 'derecha' for unknown contexts (most common)
-            return 'derecha'
+            # Default to 'derecha' for unknown contexts (most common in automotive)
+            gender = get_noun_gender(context_word)
+            return 'derecho' if gender == 'masculine' else 'derecha'
+
+    elif abbrev == 'i':
+        # 'i' means 'izquierdo/izquierda' (left) - apply gender agreement
+        gender = get_noun_gender(context_word)
+        return 'izquierdo' if gender == 'masculine' else 'izquierda'
 
     elif abbrev == 't':
-        # 't' almost always means 'trasero' in automotive context
-        return 'trasero'
+        # 't' almost always means 'trasero' in automotive context - apply gender agreement
+        gender = get_noun_gender(context_word)
+        return 'trasero' if gender == 'masculine' else 'trasera'
 
     # Return unchanged if not handled
     return abbrev

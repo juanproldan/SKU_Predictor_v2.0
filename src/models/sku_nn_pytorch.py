@@ -26,14 +26,16 @@ class OptimizedSKUNNModel(nn.Module):
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
         self.embed_dropout = nn.Dropout(dropout_rate)
 
-        # Bidirectional LSTM for better feature extraction
+        # Bidirectional LSTM for better feature extraction (no dropout for single layer)
         self.lstm = nn.LSTM(
             embedding_dim,
             hidden_size,
             batch_first=True,
-            bidirectional=True,
-            dropout=dropout_rate if dropout_rate > 0 else 0
+            bidirectional=True
         )
+
+        # External dropout layer for LSTM output
+        self.lstm_dropout = nn.Dropout(dropout_rate)
 
         # Attention mechanism
         self.attention = nn.Linear(hidden_size * 2, 1)
@@ -68,6 +70,7 @@ class OptimizedSKUNNModel(nn.Module):
         # Process through LSTM
         # (batch_size, seq_len, hidden_size*2)
         lstm_out, _ = self.lstm(embedded)
+        lstm_out = self.lstm_dropout(lstm_out)  # Apply dropout after LSTM
 
         # Apply attention
         attn_out = self.attention_net(lstm_out)  # (batch_size, hidden_size*2)
