@@ -1569,7 +1569,7 @@ class FixacarApp:
                 # --- End Neural Network Prediction ---
 
                 # SQLite Search (4-parameter matching: Make, Year, Series, Description) - Priority 3
-                if vin_year is not None and vin_series != 'N/A':
+                if vin_year is not None and vin_series.upper() != 'N/A':
                     print(
                         f"  Searching SQLite DB (Make: {vin_make}, Year: {vin_year}, Series: {vin_series})...")
                     try:
@@ -1577,14 +1577,35 @@ class FixacarApp:
 
                         # STEP 1A: Try exact description match (no normalization) - handles system-generated descriptions
                         print(f"    Trying exact match with original description: '{original_desc}'")
+
+                        # First try exact series match (CASE-INSENSITIVE)
                         cursor.execute("""
                             SELECT sku, COUNT(*) as frequency
                             FROM historical_parts
-                            WHERE vin_make = ? AND vin_year = ? AND vin_series = ? AND normalized_description = ?
+                            WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) = LOWER(?) AND LOWER(normalized_description) = LOWER(?)
                             GROUP BY sku
                             ORDER BY COUNT(*) DESC
                         """, (vin_make, vin_year, vin_series, original_desc))
                         exact_results = cursor.fetchall()
+
+                        # If no exact series match, try fuzzy series matching (CASE-INSENSITIVE)
+                        if not exact_results:
+                            print(f"    No exact series match for '{vin_series}', trying fuzzy series matching...")
+                            # Extract base series (remove brackets and extra info)
+                            base_series = vin_series.split('[')[0].strip() if '[' in vin_series else vin_series
+
+                            cursor.execute("""
+                                SELECT sku, COUNT(*) as frequency
+                                FROM historical_parts
+                                WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ?
+                                AND (LOWER(vin_series) = LOWER(?) OR LOWER(vin_series) LIKE LOWER(?) OR LOWER(vin_series) LIKE LOWER(?))
+                                AND LOWER(normalized_description) = LOWER(?)
+                                GROUP BY sku
+                                ORDER BY COUNT(*) DESC
+                            """, (vin_make, vin_year, base_series, f"{base_series}%", f"%{base_series}%", original_desc))
+                            exact_results = cursor.fetchall()
+                            if exact_results:
+                                print(f"    ✅ Found {len(exact_results)} unique SKUs via FUZZY SERIES match (base: '{base_series}')")
 
                         if exact_results:
                             print(f"    ✅ Found {len(exact_results)} unique SKUs via EXACT match")
@@ -1599,14 +1620,37 @@ class FixacarApp:
                         # STEP 1B: If no exact matches, try normalized abbreviated description
                         if not exact_results:
                             print(f"    No exact matches, trying normalized abbreviated: '{abbreviated_desc}'")
+
+                            # First try exact series match (CASE-INSENSITIVE)
                             cursor.execute("""
                                 SELECT sku, COUNT(*) as frequency
                                 FROM historical_parts
-                                WHERE vin_make = ? AND vin_year = ? AND vin_series = ? AND normalized_description = ?
+                                WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) = LOWER(?) AND LOWER(normalized_description) = LOWER(?)
                                 GROUP BY sku
                                 ORDER BY COUNT(*) DESC
                             """, (vin_make, vin_year, vin_series, abbreviated_desc))
                             results = cursor.fetchall()
+
+                            # If no exact series match, try fuzzy series matching (CASE-INSENSITIVE)
+                            if not results:
+                                print(f"    No exact series match for '{vin_series}', trying fuzzy series matching...")
+                                # Extract base series (remove brackets and extra info)
+                                base_series = vin_series.split('[')[0].strip() if '[' in vin_series else vin_series
+
+                                cursor.execute("""
+                                    SELECT sku, COUNT(*) as frequency
+                                    FROM historical_parts
+                                    WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ?
+                                    AND (LOWER(vin_series) = LOWER(?) OR LOWER(vin_series) LIKE LOWER(?) OR LOWER(vin_series) LIKE LOWER(?))
+                                    AND LOWER(normalized_description) = LOWER(?)
+                                    GROUP BY sku
+                                    ORDER BY COUNT(*) DESC
+                                """, (vin_make, vin_year, base_series, f"{base_series}%", f"%{base_series}%", abbreviated_desc))
+                                results = cursor.fetchall()
+                                if results:
+                                    print(f"    ✅ Found {len(results)} unique SKUs via FUZZY SERIES match (base: '{base_series}')")
+                        else:
+                            results = exact_results
 
                         if results:
                             print(f"    Found {len(results)} unique SKUs in DB (4-param Exact)")
@@ -1631,7 +1675,7 @@ class FixacarApp:
                             cursor.execute("""
                                 SELECT sku, COUNT(*) as frequency
                                 FROM historical_parts
-                                WHERE vin_make = ? AND vin_year = ? AND vin_series LIKE ? AND normalized_description = ?
+                                WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) LIKE LOWER(?) AND LOWER(normalized_description) = LOWER(?)
                                 GROUP BY sku
                                 ORDER BY COUNT(*) DESC
                             """, (vin_make, vin_year, f'%{vin_series}%', abbreviated_desc))
@@ -1660,7 +1704,7 @@ class FixacarApp:
                             cursor.execute("""
                                 SELECT sku, COUNT(*) as frequency
                                 FROM historical_parts
-                                WHERE vin_make = ? AND vin_year = ? AND vin_series LIKE ? AND normalized_description = ?
+                                WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) LIKE LOWER(?) AND LOWER(normalized_description) = LOWER(?)
                                 GROUP BY sku
                             """, (vin_make, vin_year, f'%{vin_series}%', normalized_original))
                             results = cursor.fetchall()
@@ -1680,7 +1724,7 @@ class FixacarApp:
                             cursor.execute("""
                                 SELECT sku, COUNT(*) as frequency
                                 FROM historical_parts
-                                WHERE vin_make = ? AND vin_year = ? AND vin_series LIKE ? AND normalized_description = ?
+                                WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) LIKE LOWER(?) AND LOWER(normalized_description) = LOWER(?)
                                 GROUP BY sku
                             """, (vin_make, vin_year, f'%{vin_series}%', normalized_expanded))
                             results = cursor.fetchall()
@@ -1701,7 +1745,7 @@ class FixacarApp:
                             cursor.execute("""
                                 SELECT sku, normalized_description, COUNT(*) as frequency
                                 FROM historical_parts
-                                WHERE vin_make = ? AND vin_year = ? AND vin_series = ?
+                                WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) = LOWER(?)
                                 GROUP BY sku, normalized_description
                             """, (vin_make, vin_year, vin_series))
                             all_results = cursor.fetchall()
@@ -1760,7 +1804,7 @@ class FixacarApp:
                             f"    Error querying SQLite DB (4-param): {db_err}")
 
                 # Fallback: 3-parameter search if no results (Make, Year, Series only)
-                if not suggestions and vin_year is not None and vin_series != 'N/A':
+                if not suggestions and vin_year is not None and vin_series.upper() != 'N/A':
                     print(
                         f"  Fallback SQLite search (3-param: Make, Year, Series)...")
                     try:
@@ -1768,7 +1812,7 @@ class FixacarApp:
                         cursor.execute("""
                             SELECT sku, normalized_description, COUNT(*) as frequency
                             FROM historical_parts
-                            WHERE vin_make = ? AND vin_year = ? AND vin_series = ?
+                            WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) = LOWER(?)
                             GROUP BY sku, normalized_description
                             ORDER BY frequency DESC
                         """, (vin_make, vin_year, vin_series))
@@ -1838,7 +1882,7 @@ class FixacarApp:
                             cursor.execute("""
                                 SELECT sku, normalized_description, COUNT(*) as frequency
                                 FROM historical_parts
-                                WHERE vin_make = ? AND vin_year = ? AND vin_series LIKE ?
+                                WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) LIKE LOWER(?)
                                 GROUP BY sku, normalized_description
                                 ORDER BY frequency DESC
                             """, (vin_make, vin_year, f'%{vin_series}%'))

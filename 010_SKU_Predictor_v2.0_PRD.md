@@ -89,6 +89,7 @@
     * ✅ **Confidence visualization** with source attribution
     * ✅ **Save Confirmed Selections** button for learning mechanism
     * ✅ **Manual SKU entry** option for expert input
+    * ✅ **🔧 CASE-INSENSITIVE PROCESSING**: All text matching, database searches, and comparisons are case-insensitive throughout the entire system
 
 * **3.2 VIN Decoding & Vehicle Identification - ✅ IMPLEMENTED:**
     * ✅ **17-character VIN validation** with regex pattern matching
