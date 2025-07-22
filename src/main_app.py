@@ -649,12 +649,12 @@ class FixacarApp:
     def load_maestro_data(self, file_path: str, equivalencias_map: dict) -> list:
         # (Content remains the same as before)
         print(f"Loading maestro data from: {file_path}")
-        # Updated column list - removed VIN_Model, VIN_BodyStyle, Equivalencia_Row_ID
+        # Updated column list - removed VIN_Model, VIN_BodyStyle, Equivalencia_Row_ID, VIN_Year_Max, Confidence
         maestro_columns = [
-            'Maestro_ID', 'VIN_Make', 'VIN_Year_Min', 'VIN_Year_Max',
+            'Maestro_ID', 'VIN_Make', 'VIN_Year',
             'VIN_Series_Trim', 'Original_Description_Input',
             'Normalized_Description_Input', 'Confirmed_SKU',
-            'Confidence', 'Source', 'Date_Added'
+            'Source', 'Date_Added'
         ]
         data_dir = os.path.dirname(file_path)
         if data_dir and not os.path.exists(data_dir):
@@ -698,8 +698,8 @@ class FixacarApp:
                 else:
                     entry['Normalized_Description_Input'] = ""
 
-                # Fix bracketed values in integer columns (removed Equivalencia_Row_ID)
-                for col in ['Maestro_ID', 'VIN_Year_Min', 'VIN_Year_Max']:
+                # Fix bracketed values in integer columns
+                for col in ['Maestro_ID', 'VIN_Year']:
                     if col in entry and pd.notna(entry[col]):
                         original_value = entry[col]  # Store original value
                         try:
@@ -711,14 +711,7 @@ class FixacarApp:
                             # Keep original value if conversion fails, don't set to None
                             print(f"Warning: Could not convert {col} value '{original_value}' to integer, keeping original value")
                             entry[col] = original_value
-                    # Don't set to None if column exists but is NaN - keep the original value
-                if 'Confidence' in entry and pd.notna(entry['Confidence']):
-                    try:
-                        entry['Confidence'] = float(entry['Confidence'])
-                    except (ValueError, TypeError):
-                        entry['Confidence'] = None
-                elif 'Confidence' in entry:
-                    entry['Confidence'] = None
+                # Removed Confidence column processing - confidence is calculated dynamically
                 maestro_list.append(entry)
             print(f"Loaded {len(maestro_list)} records from Maestro.xlsx.")
             return maestro_list
@@ -975,8 +968,10 @@ class FixacarApp:
         """
         print("\n--- 'Find SKUs' button clicked ---")
         vin = self.vin_entry.get().strip().upper()
+        print(f"Original VIN from entry: '{vin}'")
         # VIN correction step
         corrected_vin = self._correct_vin(vin)
+        print(f"After correction: '{corrected_vin}'")
         if vin != corrected_vin:
             print(f"VIN corrected from {vin} to {corrected_vin}")
             self.vin_entry.delete(0, 'end')
@@ -995,7 +990,9 @@ class FixacarApp:
         print(f"VIN Entered: {vin}")
 
         # Validate VIN format
+        print(f"VIN validation - Length: {len(vin)}, Regex match: {bool(re.match('^[A-HJ-NPR-Z0-9]{17}$', vin))}")
         if not vin or len(vin) != 17 or not re.match("^[A-HJ-NPR-Z0-9]{17}$", vin):
+            print(f"VIN validation failed for: '{vin}'")
             messagebox.showerror(
                 "Invalid VIN", "VIN must be 17 alphanumeric characters (excluding I, O, Q).")
             ttk.Label(self.scrollable_frame,
@@ -1410,23 +1407,29 @@ class FixacarApp:
                 print(f"    🔍 Description (expanded): '{normalized_expanded}'")
 
                 # First pass: Exact matches on Make, Year, Series + exact description
+                # COLLECT ALL MATCHING SKUs (not just first one)
+                maestro_exact_matches = []
                 maestro_matches_found = 0
+
                 for maestro_entry in maestro_data_global:
                     maestro_make = str(maestro_entry.get('VIN_Make', ''))
-                    maestro_year = str(maestro_entry.get('VIN_Year_Min', ''))
+                    maestro_year = str(maestro_entry.get('VIN_Year', ''))  # Updated from VIN_Year_Min
                     maestro_series = str(maestro_entry.get('VIN_Series_Trim', ''))
                     maestro_desc = str(maestro_entry.get('Normalized_Description_Input', '')).lower()
 
                     # Check 3-parameter exact match (Make, Year, Series) - CASE INSENSITIVE
                     make_match = maestro_make.upper() == vin_make.upper()
-                    year_match = maestro_year == vin_year_str_scalar
+                    # Normalize year comparison - handle both float and string formats
+                    maestro_year_normalized = str(int(float(maestro_year))) if maestro_year and str(maestro_year).replace('.', '').isdigit() else str(maestro_year)
+                    year_match = maestro_year_normalized == vin_year_str_scalar
                     series_match = maestro_series.upper() == vin_series.upper()
 
                     # Debug: Show first few comparisons
-                    if maestro_matches_found < 3:
-                        print(f"    📋 Maestro entry: Make='{maestro_make.upper()}' vs '{vin_make.upper()}' ({make_match})")
-                        print(f"    📋 Maestro entry: Year='{maestro_year}' vs '{vin_year_str_scalar}' ({year_match})")
-                        print(f"    📋 Maestro entry: Series='{maestro_series.upper()}' vs '{vin_series.upper()}' ({series_match})")
+                    if maestro_matches_found < 5:
+                        print(f"    📋 Entry {maestro_matches_found}: Make='{maestro_make.upper()}' vs '{vin_make.upper()}' ({make_match})")
+                        print(f"    📋 Entry {maestro_matches_found}: Year='{maestro_year}' vs '{vin_year_str_scalar}' ({year_match})")
+                        print(f"    📋 Entry {maestro_matches_found}: Series='{maestro_series.upper()}' vs '{vin_series.upper()}' ({series_match})")
+                        print(f"    📋 Entry {maestro_matches_found}: Desc='{maestro_desc}' vs '{normalized_original}' / '{normalized_expanded}'")
                         maestro_matches_found += 1
 
                     if make_match and year_match and series_match:
@@ -1443,11 +1446,35 @@ class FixacarApp:
                         if desc_match:
                             sku = maestro_entry.get('Confirmed_SKU')
                             if sku and sku.strip():
-                                suggestions = self._aggregate_sku_suggestions(
-                                    suggestions, sku, 1.0, "Maestro (Unified Exact)")
-                                print(f"    ✅ Found in Maestro (Unified Exact 4-param): {sku} (Conf: 1.0)")
-                                match_type = "original" if desc_match_orig else "expanded"
-                                print(f"      Matched via {match_type}: '{preprocessed_maestro_desc}'")
+                                # Store match for frequency analysis
+                                maestro_exact_matches.append({
+                                    'sku': sku,
+                                    'match_type': "original" if desc_match_orig else "expanded",
+                                    'preprocessed_desc': preprocessed_maestro_desc
+                                })
+
+                # Process ALL Maestro exact matches with frequency-based ordering
+                if maestro_exact_matches:
+                    # Count frequency of each SKU
+                    sku_frequency = {}
+                    for match in maestro_exact_matches:
+                        sku = match['sku']
+                        sku_frequency[sku] = sku_frequency.get(sku, 0) + 1
+
+                    # Sort SKUs by frequency (most repeated first)
+                    sorted_skus = sorted(sku_frequency.items(), key=lambda x: x[1], reverse=True)
+
+                    print(f"    ✅ Found {len(maestro_exact_matches)} Maestro exact matches for {len(sorted_skus)} unique SKUs")
+
+                    # Add ALL unique SKUs to suggestions (ordered by frequency)
+                    for sku, frequency in sorted_skus:
+                        suggestions = self._aggregate_sku_suggestions(
+                            suggestions, sku, 0.90, "Maestro")  # Use 0.90 as specified
+                        print(f"    ✅ Maestro SKU: {sku} (Frequency: {frequency}, Conf: 0.90)")
+
+                        # Show match details for first occurrence
+                        first_match = next(m for m in maestro_exact_matches if m['sku'] == sku)
+                        print(f"      Matched via {first_match['match_type']}: '{first_match['preprocessed_desc']}'")
 
                 # Second pass: Fuzzy description matching for same Make, Year, Series
                 if not suggestions:  # Only do fuzzy if no exact matches found
@@ -1458,11 +1485,13 @@ class FixacarApp:
                         matching_entries = []
                         for maestro_entry in maestro_data_global:
                             maestro_make = str(maestro_entry.get('VIN_Make', ''))
-                            maestro_year = str(maestro_entry.get('VIN_Year_Min', ''))
+                            maestro_year = str(maestro_entry.get('VIN_Year', ''))  # Updated from VIN_Year_Min
                             maestro_series = str(maestro_entry.get('VIN_Series_Trim', ''))
 
+                            # Normalize year comparison for fuzzy matching too
+                            maestro_year_normalized = str(int(float(maestro_year))) if maestro_year and str(maestro_year).replace('.', '').isdigit() else str(maestro_year)
                             if (maestro_make.upper() == vin_make.upper() and
-                                maestro_year == vin_year_str_scalar and
+                                maestro_year_normalized == vin_year_str_scalar and
                                 maestro_series.upper() == vin_series.upper()):
                                 matching_entries.append(maestro_entry)
 
@@ -1515,6 +1544,65 @@ class FixacarApp:
                                 print(f"    ❌ No suitable fuzzy match found in Maestro after unified preprocessing")
                     except ImportError:
                         print("    Fuzzy matching not available for Maestro search")
+
+                # --- Maestro Fallback: Make + Year Only (when Series prediction fails) ---
+                if not suggestions and (vin_series == 'Unknown (VDS/WMI)' or vin_series == 'N/A'):
+                    print(f"  🔄 Maestro Fallback: Series prediction failed ('{vin_series}'), trying Make + Year + Description matching...")
+
+                    fallback_matches = []
+                    for maestro_entry in maestro_data_global:
+                        maestro_make = str(maestro_entry.get('VIN_Make', ''))
+                        maestro_year = str(maestro_entry.get('VIN_Year', ''))
+                        maestro_desc = str(maestro_entry.get('Normalized_Description_Input', '')).lower()
+
+                        # Normalize year comparison
+                        maestro_year_normalized = str(int(float(maestro_year))) if maestro_year and str(maestro_year).replace('.', '').isdigit() else str(maestro_year)
+
+                        # Check Make + Year match only
+                        make_match = maestro_make.upper() == vin_make.upper()
+                        year_match = maestro_year_normalized == vin_year_str_scalar
+
+                        if make_match and year_match:
+                            # Apply unified preprocessing for description matching
+                            preprocessed_maestro_desc = self.unified_text_preprocessing(maestro_desc)
+                            preprocessed_original = self.unified_text_preprocessing(original_desc)
+                            preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
+
+                            # Check for exact description match after unified preprocessing
+                            desc_match_orig = preprocessed_maestro_desc == preprocessed_original
+                            desc_match_exp = preprocessed_maestro_desc == preprocessed_expanded
+
+                            if desc_match_orig or desc_match_exp:
+                                sku = maestro_entry.get('Confirmed_SKU')
+                                if sku and sku.strip() and sku.strip().upper() != 'UNKNOWN':
+                                    match_type = "Original" if desc_match_orig else "Expanded"
+                                    fallback_matches.append({
+                                        'sku': sku.strip(),
+                                        'entry': maestro_entry,
+                                        'match_type': f"Fallback-{match_type}",
+                                        'series': maestro_entry.get('VIN_Series_Trim', 'N/A')
+                                    })
+                                    print(f"    ✅ Fallback match: {sku} (Series: {maestro_entry.get('VIN_Series_Trim', 'N/A')})")
+
+                    # Process fallback matches with lower confidence (since series wasn't matched)
+                    if fallback_matches:
+                        print(f"  ✅ Found {len(fallback_matches)} Maestro fallback matches (Make + Year + Description)")
+
+                        # Count frequency of each SKU
+                        sku_frequency = {}
+                        for match in fallback_matches:
+                            sku = match['sku']
+                            sku_frequency[sku] = sku_frequency.get(sku, 0) + 1
+
+                        # Sort by frequency (most repeated first)
+                        sorted_skus = sorted(sku_frequency.items(), key=lambda x: x[1], reverse=True)
+
+                        # Add SKUs with reduced confidence (0.75 instead of 0.90)
+                        for sku, frequency in sorted_skus:
+                            print(f"     📋 Maestro Fallback SKU: {sku} (frequency: {frequency})")
+                            suggestions = self._aggregate_sku_suggestions(suggestions, sku, 0.75, "Maestro-Fallback")
+                    else:
+                        print(f"  ❌ No Maestro fallback matches found")
 
                 # --- Neural Network Prediction (Priority 2) ---
                 # Ensure vehicle details are strings for the NN model
@@ -2007,9 +2095,35 @@ class FixacarApp:
                 # Use the normalized (expanded) version for display, but capitalize it properly
                 display_desc = normalized_original.upper() if normalized_original else original_desc
 
-                # Get suggestions and filter out any empty SKUs that might have slipped through
-                suggestions_list = [(sku, info) for sku, info in self.current_suggestions.get(original_desc, [])
-                                    if sku and sku.strip()][:5]
+                # Get suggestions and apply source-specific limits
+                all_suggestions = [(sku, info) for sku, info in self.current_suggestions.get(original_desc, [])
+                                   if sku and sku.strip()]
+
+                # Apply source-specific limits: Maestro=unlimited, NN=2, DB=2
+                maestro_suggestions = []
+                nn_suggestions = []
+                db_suggestions = []
+
+                for sku, info in all_suggestions:
+                    source = info.get('source', '')
+                    if 'Maestro' in source:
+                        maestro_suggestions.append((sku, info))
+                    elif 'NN' in source or 'Neural' in source:
+                        if len(nn_suggestions) < 2:  # Limit NN to 2 results
+                            nn_suggestions.append((sku, info))
+                    elif 'DB' in source or 'Database' in source:
+                        if len(db_suggestions) < 2:  # Limit DB to 2 results
+                            db_suggestions.append((sku, info))
+                    else:
+                        # Handle other sources (fuzzy, etc.) - treat as DB for now
+                        if len(db_suggestions) < 2:
+                            db_suggestions.append((sku, info))
+
+                # Combine all limited suggestions and sort by confidence
+                suggestions_list = maestro_suggestions + nn_suggestions + db_suggestions
+                suggestions_list.sort(key=lambda x: x[1].get('confidence', 0), reverse=True)
+
+                print(f"    📊 Results for '{original_desc}': Maestro={len(maestro_suggestions)}, NN={len(nn_suggestions)}, DB={len(db_suggestions)}, Total={len(suggestions_list)}")
 
                 part_frame = ttk.LabelFrame(
                     self.results_grid_container, text=f"{display_desc}", padding=5)
@@ -2342,7 +2456,7 @@ class FixacarApp:
             for existing_entry in maestro_data_global:
                 # Check for duplicates based on 4-parameter approach (no VIN_Model, VIN_BodyStyle, Equivalencia_Row_ID)
                 if (existing_entry.get('VIN_Make') == selection['vin_details'].get('Make') and
-                    existing_entry.get('VIN_Year_Min') == selection['vin_details'].get('Model Year') and
+                    existing_entry.get('VIN_Year') == selection['vin_details'].get('Model Year') and  # Updated from VIN_Year_Min
                     existing_entry.get('VIN_Series_Trim') == selection['vin_details'].get('Series') and
                     existing_entry.get('Normalized_Description_Input') == selection['normalized_description'] and
                         existing_entry.get('Confirmed_SKU') == selection['confirmed_sku']):
@@ -2362,13 +2476,11 @@ class FixacarApp:
                 new_entry = {
                     'Maestro_ID': next_id,
                     'VIN_Make': selection['vin_details'].get('Make'),
-                    'VIN_Year_Min': model_year,
-                    'VIN_Year_Max': model_year,
+                    'VIN_Year': model_year,
                     'VIN_Series_Trim': selection['vin_details'].get('Series'),
                     'Original_Description_Input': selection['original_description'],
                     'Normalized_Description_Input': selection['normalized_description'],
                     'Confirmed_SKU': selection['confirmed_sku'],
-                    'Confidence': 1.0,
                     'Source': selection.get('source', 'UserConfirmed'),
                     'Date_Added': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
@@ -2384,12 +2496,12 @@ class FixacarApp:
             print(
                 f"Attempting to save {added_count} new entries to {DEFAULT_MAESTRO_PATH}...")
             try:
-                # Removed columns: VIN_Model, VIN_BodyStyle, Equivalencia_Row_ID
+                # Removed columns: VIN_Model, VIN_BodyStyle, Equivalencia_Row_ID, VIN_Year_Max, Confidence
                 maestro_columns = [
-                    'Maestro_ID', 'VIN_Make', 'VIN_Year_Min', 'VIN_Year_Max',
+                    'Maestro_ID', 'VIN_Make', 'VIN_Year',
                     'VIN_Series_Trim', 'Original_Description_Input',
                     'Normalized_Description_Input', 'Confirmed_SKU',
-                    'Confidence', 'Source', 'Date_Added'
+                    'Source', 'Date_Added'
                 ]
                 df_to_save = pd.DataFrame(
                     maestro_data_global, columns=maestro_columns)

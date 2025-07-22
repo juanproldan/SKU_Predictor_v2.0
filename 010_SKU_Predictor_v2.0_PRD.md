@@ -27,6 +27,7 @@
     * ✅ **Comprehensive GUI** with responsive layout and confidence visualization
     * ✅ **Data Processing Pipeline** with text normalization and VIN correction
     * ✅ **Learning Mechanism** that saves user confirmations to improve future predictions
+    * ✅ **🔄 Multi-SKU Maestro Support** handling many-to-many relationships between parts and vehicles
 
 * **1.3 Core Goals ACHIEVED:**
     * ✅ Enable non-technical users to quickly find collision part SKUs through **4 different prediction methods**
@@ -90,6 +91,7 @@
     * ✅ **Save Confirmed Selections** button for learning mechanism
     * ✅ **Manual SKU entry** option for expert input
     * ✅ **🔧 CASE-INSENSITIVE PROCESSING**: All text matching, database searches, and comparisons are case-insensitive throughout the entire system
+    * ✅ **🔄 MULTI-SKU MAESTRO SUPPORT**: Maestro returns ALL matching SKUs ordered by frequency, handling many-to-many relationships between parts and vehicles
 
 * **3.2 VIN Decoding & Vehicle Identification - ✅ IMPLEMENTED:**
     * ✅ **17-character VIN validation** with regex pattern matching
@@ -110,7 +112,33 @@
       - ✅ Unicode normalization (NFKD form)
     * ✅ **Fuzzy normalization option** for enhanced matching
     * ✅ **Applied consistently** across all prediction sources
-* **3.4 Equivalency Linking & Synonym Expansion - ✅ IMPLEMENTED:**
+
+### **🔄 3.4 Multi-SKU Maestro Support - ✅ IMPLEMENTED:**
+* **Problem Solved**: Many-to-many relationships between parts and vehicles
+  - Same part description can have multiple valid SKUs (different suppliers, cross-compatible parts)
+  - Same SKU can fit multiple vehicle combinations (shared parts across models)
+  - Example: Renault Logan front bumper also fits Renault Sandero (different SKUs, same part)
+
+* **✅ Implementation Details:**
+  - **Maestro Returns ALL Matches**: Instead of stopping at first match, collects all matching SKUs
+  - **Frequency-Based Ordering**: SKUs ordered by repetition frequency (most popular first)
+  - **Unlimited Maestro Results**: No artificial limits on Maestro matches (shows all valid options)
+  - **Source-Specific Limits**: Neural Network (max 2), Database (max 2), Maestro (unlimited)
+  - **Confidence-Based Final Sorting**: All results sorted by confidence score across sources
+
+* **✅ Result Display Logic:**
+  ```
+  Example Output for "paragolpes delantero":
+  1. SKU_B - 90% (Maestro) ← Frequency: 7 times (most repeated)
+  2. SKU_A - 90% (Maestro) ← Frequency: 5 times
+  3. SKU_C - 90% (Maestro) ← Frequency: 2 times
+  4. SKU_D - 85% (Neural Network) ← Best NN prediction
+  5. SKU_E - 80% (Neural Network) ← Second best NN prediction
+  6. SKU_F - 75% (Database) ← Best DB prediction
+  7. SKU_G - 70% (Database) ← Second best DB prediction
+  ```
+
+* **3.5 Equivalency Linking & Synonym Expansion - ✅ IMPLEMENTED:**
     * ✅ **Global Synonym Expansion System** - Revolutionary preprocessing approach
     * ✅ **Loads `Equivalencias.xlsx`** into dual in-memory structures:
       - **Equivalencias Map**: normalized_term → Equivalencia_Row_ID
@@ -428,10 +456,12 @@
 - **VIN Prediction Models** (Make, Year, Series extraction)
 - **Global Synonym Expansion System** (Equivalencias preprocessing)
 - **Expert Learning Mechanism** (Maestro 4-parameter matching)
+- **🔄 Multi-SKU Maestro Support** (Many-to-many relationships, frequency-based ordering)
 - **Neural Network Prediction** (Optimized PyTorch with attention)
 - **Comprehensive GUI** (Responsive design with confidence visualization)
 - **Data Processing Pipeline** (Offline training and incremental updates)
 - **Robust Error Handling** (Graceful fallbacks and user-friendly messages)
+- **🔧 Case-Insensitive Processing** (All text matching and database searches)
 
 ### 🎯 **SYSTEM PERFORMANCE:**
 - **Prediction Accuracy**: Multi-source approach maximizes coverage
