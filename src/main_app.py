@@ -591,7 +591,13 @@ class FixacarApp:
 
             # Save word-level corrections
             for word_correction in word_level_corrections:
-                self._save_word_level_correction(user_corrections_df, word_correction)
+                user_corrections_df = self._save_word_level_correction(user_corrections_df, word_correction)
+                # Also update the in-memory map for word-level corrections
+                word_pattern = f"WORD: {word_correction['original_word']} → {word_correction['corrected_word']}"
+                context_info = word_correction['context']
+                if context_info['type'] != 'unknown':
+                    word_pattern += f" ({context_info['type']})"
+                user_corrections_map_global[word_pattern] = word_correction['corrected_word']
 
             # Save back to Excel (preserve other tabs)
             with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
@@ -665,9 +671,10 @@ class FixacarApp:
 
         return context
 
-    def _save_word_level_correction(self, df: pd.DataFrame, word_correction: dict):
+    def _save_word_level_correction(self, df: pd.DataFrame, word_correction: dict) -> pd.DataFrame:
         """
         Save a word-level correction to the DataFrame.
+        Returns the updated DataFrame.
         """
         # Create a unique identifier for this word correction pattern
         word_pattern = f"WORD: {word_correction['original_word']} → {word_correction['corrected_word']}"
@@ -703,6 +710,8 @@ class FixacarApp:
             new_df = pd.DataFrame([new_word_row])
             df = pd.concat([df, new_df], ignore_index=True)
             print(f"    ✨ Added word-level pattern: {word_pattern}")
+
+        return df
 
     def open_correction_dialog(self, original_desc: str, display_desc: str):
         """
@@ -773,6 +782,9 @@ class FixacarApp:
             if corrected_text and corrected_text != original_desc:
                 # Save the correction
                 self.save_user_correction(original_desc, corrected_text)
+
+                # Reload text processing rules to include the new correction
+                self.load_text_processing_rules(DEFAULT_TEXT_PROCESSING_PATH)
 
                 # Re-process the current search with the new correction
                 self.find_skus_handler()
@@ -1827,21 +1839,26 @@ class FixacarApp:
             for original_desc in original_descriptions:
                 print(f"  Processing: '{original_desc}'")
 
-                # STEP 1: Normalize the original description (without synonym expansion)
-                normalized_original = normalize_text(original_desc)
+                # STEP 1: Apply user corrections FIRST (highest priority)
+                corrected_desc = self.apply_user_corrections(original_desc)
+                if corrected_desc != original_desc:
+                    print(f"  ✅ User correction applied: '{original_desc}' → '{corrected_desc}'")
+
+                # STEP 2: Normalize the corrected description (without synonym expansion)
+                normalized_original = normalize_text(corrected_desc)
                 print(f"  Normalized original: '{normalized_original}'")
 
-                # STEP 2: Apply synonym expansion for fallback searches
-                expanded_desc = self.expand_synonyms(original_desc)
+                # STEP 3: Apply synonym expansion for fallback searches (use corrected description)
+                expanded_desc = self.expand_synonyms(corrected_desc)
                 print(f"  After synonym expansion: '{expanded_desc}'")
                 normalized_expanded = normalize_text(expanded_desc)
                 print(f"  Normalized expanded: '{normalized_expanded}'")
 
-                # STEP 3: Create abbreviated version to match database format
+                # STEP 4: Create abbreviated version to match database format
                 abbreviated_desc = self.create_abbreviated_version(normalized_original)
                 print(f"  Abbreviated version: '{abbreviated_desc}'")
 
-                # STEP 3: Look up equivalencia ID using the expanded form (CASE-INSENSITIVE)
+                # STEP 5: Look up equivalencia ID using the expanded form (CASE-INSENSITIVE)
                 equivalencia_id = equivalencias_map_global.get(normalized_expanded.lower())
 
                 # STEP 4: If no direct match, try fuzzy matching as fallback
@@ -2560,8 +2577,14 @@ class FixacarApp:
                 original_desc = part_info["original"]
                 normalized_original = part_info["normalized_original"]
 
-                # Use the normalized (expanded) version for display, but capitalize it properly
-                display_desc = normalized_original.upper() if normalized_original else original_desc
+                # Apply user corrections first (highest priority), then use normalized version
+                corrected_desc = self.apply_user_corrections(original_desc)
+                if corrected_desc != original_desc:
+                    # User correction exists - use it for display
+                    display_desc = corrected_desc.upper()
+                else:
+                    # No user correction - use the normalized (expanded) version for display
+                    display_desc = normalized_original.upper() if normalized_original else original_desc
 
                 # Get suggestions and apply source-specific limits
                 all_suggestions = [(sku, info) for sku, info in self.current_suggestions.get(original_desc, [])
