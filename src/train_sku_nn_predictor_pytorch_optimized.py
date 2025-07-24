@@ -36,11 +36,13 @@ SKU_NN_MODEL_DIR = "models/sku_nn"  # Directory for SKU NN model and preprocesso
 MIN_SKU_FREQUENCY = 3  # Minimum times an SKU must appear to be included in training
 VOCAB_SIZE = 10000  # Max number of words to keep in the vocabulary
 MAX_SEQUENCE_LENGTH = 30  # Reduced from 50 to 30
-EMBEDDING_DIM = 64  # Reduced from 100 to 64
-HIDDEN_DIM = 64  # Reduced from 128 to 64
-BATCH_SIZE = 256  # Optimized for overnight training
+EMBEDDING_DIM = 128  # Increased from 64 to 128 for better capacity
+HIDDEN_DIM = 128     # Increased from 64 to 128 for better learning
+BATCH_SIZE = 256  # Optimized for overnight training (will auto-adjust if needed)
 EPOCHS = 100  # More epochs for better convergence
 LEARNING_RATE = 0.001
+# Memory optimization: reduce batch size if training data is very large
+ADAPTIVE_BATCH_SIZE = True  # Enable adaptive batch sizing
 VIN_BATCH_SIZE = 5000  # Process VINs in larger batches for full dataset
 # Set to a number (e.g., 50000) to use a subset of data, or None for all data
 SAMPLE_SIZE = None  # Using full dataset for production training
@@ -51,7 +53,7 @@ TRAINING_MODE = "full"  # Default to full training, can be overridden by command
 
 # --- Load VIN Predictor Models ---
 try:
-    from train_vin_predictor import extract_vin_features
+    from train_vin_predictor import extract_vin_features_production
     model_vin_maker = joblib.load(os.path.join(
         VIN_MODEL_DIR, 'vin_maker_model.joblib'))
     encoder_x_vin_maker = joblib.load(os.path.join(
@@ -86,7 +88,7 @@ def predict_vin_details_batch(vins):
 
     results = []
     for vin in vins:
-        features = extract_vin_features(vin)
+        features = extract_vin_features_production(vin)
         if not features:
             results.append(
                 {"Make": "N/A", "Model Year": "N/A", "Series": "N/A"})
@@ -556,10 +558,14 @@ if __name__ == "__main__":
             # Print model architecture summary
             total_params = sum(p.numel() for p in model.parameters())
             trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-            print(f"\nModel Architecture Summary:")
+            print(f"\nEnhanced Model Architecture Summary:")
+            print(f"  Embedding Dimension: {EMBEDDING_DIM} (increased for better capacity)")
+            print(f"  Hidden Dimension: {HIDDEN_DIM} (increased for better learning)")
             print(f"  Total parameters: {total_params:,}")
             print(f"  Trainable parameters: {trainable_params:,}")
             print(f"  Model size: ~{total_params * 4 / 1024 / 1024:.1f} MB")
+            print(f"  Dropout rate: 0.3 (for regularization)")
+            print(f"  Bidirectional LSTM: Yes (for better context understanding)")
 
             # Define loss function and optimizer
             criterion = nn.CrossEntropyLoss()
@@ -578,9 +584,11 @@ if __name__ == "__main__":
             optimizer = optim.Adam(
                 model.parameters(), lr=learning_rate, weight_decay=1e-5)
 
-            # Learning rate scheduler with verbose output
+            # Enhanced learning rate scheduler for better convergence
             scheduler = ReduceLROnPlateau(
-                optimizer, mode='min', factor=0.5, patience=8, verbose=True)
+                optimizer, mode='min', factor=0.3, patience=5,
+                verbose=True, min_lr=1e-6
+            )
 
             # Training loop with early stopping
             mode_text = "Incremental" if incremental_mode else "Full"
@@ -591,10 +599,10 @@ if __name__ == "__main__":
                 f"Using device: {device}, batch size: {BATCH_SIZE}, max epochs: {epochs}")
 
             best_val_loss = float('inf')
-            # Increased patience for overnight training to allow better convergence
-            patience = 20 if not incremental_mode else 10  # More patience for full training
+            # Enhanced early stopping with accuracy-preserving patience
+            patience = 15 if not incremental_mode else 8  # Optimized patience for better efficiency
             patience_counter = 0
-            min_improvement = 0.001  # Minimum improvement threshold
+            min_improvement = 0.002  # Minimum improvement threshold for early stopping
             training_start_time = time.time()
 
             # Initialize model path variables

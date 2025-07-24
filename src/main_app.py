@@ -18,14 +18,14 @@ try:
     from models.sku_nn_pytorch import load_model, predict_sku
     from utils.text_utils import normalize_text
     from utils.dummy_tokenizer import DummyTokenizer
-    from train_vin_predictor import extract_vin_features, decode_year
+    from train_vin_predictor import extract_vin_features_production, decode_year
 except ImportError:
     try:
         # Fallback for package execution
         from .models.sku_nn_pytorch import load_model, predict_sku
         from .utils.text_utils import normalize_text
         from .utils.dummy_tokenizer import DummyTokenizer
-        from .train_vin_predictor import extract_vin_features, decode_year
+        from .train_vin_predictor import extract_vin_features_production, decode_year
     except ImportError:
         # Final fallback - add src to path and try again
         import sys
@@ -36,7 +36,7 @@ except ImportError:
         from models.sku_nn_pytorch import load_model, predict_sku
         from utils.text_utils import normalize_text
         from utils.dummy_tokenizer import DummyTokenizer
-        from train_vin_predictor import extract_vin_features, decode_year
+        from train_vin_predictor import extract_vin_features_production, decode_year
 
 import sys
 
@@ -55,8 +55,8 @@ def get_resource_path(relative_path):
 
 
 # --- Configuration (using resource path) ---
-DEFAULT_EQUIVALENCIAS_PATH = get_resource_path(os.path.join(
-    "Source_Files", "Equivalencias.xlsx"))
+DEFAULT_TEXT_PROCESSING_PATH = get_resource_path(os.path.join(
+    "Source_Files", "Text_Processing_Rules.xlsx"))
 DEFAULT_MAESTRO_PATH = get_resource_path(os.path.join("data", "Maestro.xlsx"))
 DEFAULT_DB_PATH = get_resource_path(os.path.join("data", "fixacar_history.db"))
 MODEL_DIR = get_resource_path("models")
@@ -72,6 +72,8 @@ NUM_CONSOLIDADO_CHUNKS_FOR_VIN_LOAD = 10
 # In-memory data stores
 equivalencias_map_global = {}
 synonym_expansion_map_global = {}  # New: maps synonyms to equivalence group IDs
+abbreviations_map_global = {}  # New: maps abbreviations to full forms
+user_corrections_map_global = {}  # New: maps original text to corrected text
 maestro_data_global = []  # This will hold the list of dictionaries
 # VIN details lookup is replaced by models
 
@@ -114,13 +116,14 @@ class FixacarApp:
     def load_all_data_and_models(self):
         """Loads data files and trained prediction models on startup."""
         global equivalencias_map_global, synonym_expansion_map_global, maestro_data_global
+        global abbreviations_map_global, user_corrections_map_global
         global model_maker, encoder_x_maker, encoder_y_maker
         global model_year, encoder_x_year, encoder_y_year
         global model_series, encoder_x_series, encoder_y_series
 
         print("--- Loading Application Data & Models ---")
-        equivalencias_map_global = self.load_equivalencias_data(
-            DEFAULT_EQUIVALENCIAS_PATH)
+        # Load all text processing rules from unified file
+        self.load_text_processing_rules(DEFAULT_TEXT_PROCESSING_PATH)
         maestro_data_global = self.load_maestro_data(
             DEFAULT_MAESTRO_PATH, equivalencias_map_global)
 
@@ -362,31 +365,225 @@ class FixacarApp:
         This ensures that BOTH input descriptions AND target comparison texts (from Database/Maestro)
         receive identical preprocessing, eliminating false penalties for linguistically equivalent terms.
 
-        Pipeline:
-        1. Synonym Expansion: Apply Equivalencias.xlsx industry synonyms
-        2. Linguistic Normalization: Expand abbreviations, handle gender agreement, plurals/singulars
-        3. Text Normalization: Convert to lowercase, remove extra spaces, standardize punctuation
+        Pipeline (Priority Order):
+        1. User Corrections: Apply learned corrections from user feedback (HIGHEST PRIORITY)
+        2. Abbreviations: Expand automotive abbreviations (PUER → PUERTA)
+        3. Synonym Expansion: Apply Equivalencias.xlsx industry synonyms
+        4. Linguistic Normalization: Handle gender agreement, plurals/singulars
+        5. Text Normalization: Convert to lowercase, remove extra spaces, standardize punctuation
 
         Example:
-        - Input: "FAROLA IZQ" → "GROUP_1001"
-        - Target: "FAROLA IZQUIERDA" → "GROUP_1001"
-        - Result: Perfect match (1.0 similarity) instead of penalized fuzzy match (0.85)
+        - Input: "VIDRIO PUER.DL.D."
+        - Step 1: Check user corrections (if user taught: "VIDRIO PUER.DL.D." → "CRISTAL PUERTA DELANTERA DERECHA")
+        - Step 2: Apply abbreviations: "PUER" → "PUERTA", "DL" → "DELANTERA", "D" → "DERECHA"
+        - Step 3: Apply synonyms: "VIDRIO" → "GROUP_1001" (if in equivalencias)
+        - Result: Consistent, learned text processing
         """
         if not text or not text.strip():
             return ""
 
-        # Step 1: Apply synonym expansion (industry-specific terms from Equivalencias.xlsx)
-        expanded_text = self.expand_synonyms(text)
+        # Step 1: Apply user corrections FIRST (highest priority - learned from user feedback)
+        corrected_text = self.apply_user_corrections(text)
 
-        # Step 2: Apply comprehensive linguistic normalization
-        # This handles abbreviations, gender agreement, plurals/singulars
+        # Step 2: Apply abbreviations expansion
+        abbreviated_text = self.apply_abbreviations(corrected_text)
+
+        # Step 3: Apply synonym expansion (industry-specific terms from Equivalencias.xlsx)
+        expanded_text = self.expand_synonyms(abbreviated_text)
+
+        # Step 4: Apply comprehensive linguistic normalization
+        # This handles gender agreement, plurals/singulars
         normalized_text = normalize_text(expanded_text, expand_linguistic_variations=True)
 
-        # Step 3: Final text normalization (lowercase, spaces, punctuation)
+        # Step 5: Final text normalization (lowercase, spaces, punctuation)
         final_text = normalized_text.lower().strip()
 
         print(f"    Unified preprocessing: '{text}' → '{final_text}'")
         return final_text
+
+    def apply_user_corrections(self, text: str) -> str:
+        """
+        Apply user corrections from the User_Corrections tab.
+        This has the HIGHEST priority in text processing.
+        """
+        if not text or not user_corrections_map_global:
+            return text
+
+        # Check for exact match first
+        if text in user_corrections_map_global:
+            corrected = user_corrections_map_global[text]
+            print(f"    ✅ User correction applied: '{text}' → '{corrected}'")
+            return corrected
+
+        # Could add fuzzy matching for user corrections here in the future
+        return text
+
+    def apply_abbreviations(self, text: str) -> str:
+        """
+        Apply abbreviations expansion from the Abbreviations tab.
+        This replaces the hardcoded AUTOMOTIVE_ABBR dictionary.
+        """
+        if not text or not abbreviations_map_global:
+            return text
+
+        words = text.split()
+        expanded_words = []
+
+        for word in words:
+            # Clean word for lookup (remove punctuation, convert to lowercase)
+            clean_word = word.lower().strip('.,;:!?')
+
+            if clean_word in abbreviations_map_global:
+                expanded = abbreviations_map_global[clean_word]
+                expanded_words.append(expanded)
+                print(f"    📝 Abbreviation expanded: '{word}' → '{expanded}'")
+            else:
+                expanded_words.append(word)
+
+        return ' '.join(expanded_words)
+
+    def save_user_correction(self, original_text: str, corrected_text: str):
+        """
+        Save a user correction to both memory and the Excel file.
+        This enables the learning mechanism.
+        """
+        global user_corrections_map_global
+
+        # Update in-memory map
+        user_corrections_map_global[original_text] = corrected_text
+
+        # Update Excel file
+        try:
+            # Read current data
+            file_path = DEFAULT_TEXT_PROCESSING_PATH
+            user_corrections_df = pd.read_excel(file_path, sheet_name='User_Corrections')
+
+            # Check if correction already exists
+            existing_mask = user_corrections_df['Original_Text'] == original_text
+
+            if existing_mask.any():
+                # Update existing correction (last correction wins)
+                user_corrections_df.loc[existing_mask, 'Corrected_Text'] = corrected_text
+                user_corrections_df.loc[existing_mask, 'Last_Used'] = pd.Timestamp.now()
+                user_corrections_df.loc[existing_mask, 'Usage_Count'] = user_corrections_df.loc[existing_mask, 'Usage_Count'] + 1
+                print(f"    📚 Updated existing user correction: '{original_text}' → '{corrected_text}'")
+            else:
+                # Add new correction
+                new_row = {
+                    'Original_Text': original_text,
+                    'Corrected_Text': corrected_text,
+                    'Date_Added': pd.Timestamp.now(),
+                    'Usage_Count': 1,
+                    'Last_Used': pd.Timestamp.now(),
+                    'Notes': 'User correction'
+                }
+                user_corrections_df = pd.concat([user_corrections_df, pd.DataFrame([new_row])], ignore_index=True)
+                print(f"    📚 Added new user correction: '{original_text}' → '{corrected_text}'")
+
+            # Save back to Excel (preserve other tabs)
+            with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+                user_corrections_df.to_excel(writer, sheet_name='User_Corrections', index=False)
+
+        except Exception as e:
+            print(f"    ⚠️ Error saving user correction: {e}")
+
+    def open_correction_dialog(self, original_desc: str, display_desc: str):
+        """
+        Open a dialog for the user to correct the text processing result.
+        This enables the learning mechanism for text processing.
+        """
+        # Create correction dialog window
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Correct Description")
+        dialog.geometry("500x300")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        # Main frame
+        main_frame = ttk.Frame(dialog, padding=20)
+        main_frame.pack(fill="both", expand=True)
+
+        # Title
+        title_label = ttk.Label(
+            main_frame,
+            text="Correct Description Processing",
+            font=("", 12, "bold")
+        )
+        title_label.pack(pady=(0, 15))
+
+        # Original text
+        ttk.Label(main_frame, text="Original text you entered:", font=("", 10, "bold")).pack(anchor="w")
+        original_label = ttk.Label(
+            main_frame,
+            text=original_desc,
+            font=("", 10),
+            foreground="blue",
+            wraplength=450
+        )
+        original_label.pack(anchor="w", pady=(0, 10))
+
+        # Current processed result
+        ttk.Label(main_frame, text="Current processed result:", font=("", 10, "bold")).pack(anchor="w")
+        current_label = ttk.Label(
+            main_frame,
+            text=display_desc,
+            font=("", 10),
+            foreground="red",
+            wraplength=450
+        )
+        current_label.pack(anchor="w", pady=(0, 10))
+
+        # Correction input
+        ttk.Label(main_frame, text="Enter the correct description:", font=("", 10, "bold")).pack(anchor="w")
+        correction_var = tk.StringVar(value=display_desc)
+        correction_entry = ttk.Entry(main_frame, textvariable=correction_var, width=60)
+        correction_entry.pack(fill="x", pady=(5, 15))
+        correction_entry.focus()
+        correction_entry.select_range(0, tk.END)
+
+        # Buttons frame
+        buttons_frame = ttk.Frame(main_frame)
+        buttons_frame.pack(fill="x")
+
+        def save_correction():
+            corrected_text = correction_var.get().strip()
+            if corrected_text and corrected_text != original_desc:
+                # Save the correction
+                self.save_user_correction(original_desc, corrected_text)
+
+                # Re-process the current search with the new correction
+                self.find_skus_handler()
+
+                # Show success message
+                messagebox.showinfo(
+                    "Correction Saved",
+                    f"✅ Correction saved successfully!\n\n"
+                    f"The system has learned that:\n"
+                    f"'{original_desc}' → '{corrected_text}'\n\n"
+                    f"Search results have been updated."
+                )
+            dialog.destroy()
+
+        def cancel_correction():
+            dialog.destroy()
+
+        # Cancel button
+        cancel_btn = ttk.Button(buttons_frame, text="Cancel", command=cancel_correction)
+        cancel_btn.pack(side="right", padx=(5, 0))
+
+        # Save button
+        save_btn = ttk.Button(buttons_frame, text="Save Correction", command=save_correction)
+        save_btn.pack(side="right")
+
+        # Bind Enter key to save
+        dialog.bind('<Return>', lambda e: save_correction())
+        dialog.bind('<Escape>', lambda e: cancel_correction())
 
     def create_abbreviated_version(self, description: str) -> str:
         """
@@ -597,6 +794,99 @@ class FixacarApp:
                 return 0.92
 
         return 0.0
+
+    def load_text_processing_rules(self, file_path: str):
+        """
+        Load all text processing rules from the unified Text_Processing_Rules.xlsx file.
+        This includes equivalencias, abbreviations, and user corrections.
+        """
+        global equivalencias_map_global, synonym_expansion_map_global
+        global abbreviations_map_global, user_corrections_map_global
+
+        print(f"Loading text processing rules from: {file_path}")
+        if not os.path.exists(file_path):
+            print(f"Warning: Text processing rules file not found at {file_path}. Text processing will be limited.")
+            return
+
+        try:
+            # Load Equivalencias tab
+            equivalencias_df = pd.read_excel(file_path, sheet_name='Equivalencias')
+            equivalencias_map_global = self._process_equivalencias_data(equivalencias_df)
+
+            # Load Abbreviations tab
+            abbreviations_df = pd.read_excel(file_path, sheet_name='Abbreviations')
+            abbreviations_map_global = self._process_abbreviations_data(abbreviations_df)
+
+            # Load User Corrections tab
+            user_corrections_df = pd.read_excel(file_path, sheet_name='User_Corrections')
+            user_corrections_map_global = self._process_user_corrections_data(user_corrections_df)
+
+            print(f"✅ Loaded text processing rules:")
+            print(f"   - Equivalencias: {len(equivalencias_map_global)} mappings")
+            print(f"   - Abbreviations: {len(abbreviations_map_global)} mappings")
+            print(f"   - User Corrections: {len(user_corrections_map_global)} mappings")
+
+        except Exception as e:
+            print(f"Error loading text processing rules: {e}")
+            # Initialize empty maps as fallback
+            equivalencias_map_global = {}
+            synonym_expansion_map_global = {}
+            abbreviations_map_global = {}
+            user_corrections_map_global = {}
+
+    def _process_equivalencias_data(self, df: pd.DataFrame) -> dict:
+        """Process equivalencias data and create both ID mapping and synonym expansion dictionary."""
+        equivalencias_map = {}
+        synonym_expansion_map = {}
+
+        for index, row in df.iterrows():
+            equivalencia_row_id = index + 1  # 1-based ID
+
+            # Process all non-empty cells in the row as synonyms
+            synonyms = []
+            for col in df.columns:
+                if pd.notna(row[col]) and str(row[col]).strip():
+                    synonym = str(row[col]).strip()
+                    synonyms.append(synonym)
+
+            # Create mappings for each synonym
+            for synonym in synonyms:
+                from utils.text_utils import normalize_text
+                normalized_synonym = normalize_text(synonym)
+                equivalencias_map[normalized_synonym] = equivalencia_row_id
+                synonym_expansion_map[normalized_synonym] = equivalencia_row_id
+
+        # Store the synonym expansion map globally
+        global synonym_expansion_map_global
+        synonym_expansion_map_global = synonym_expansion_map
+
+        return equivalencias_map
+
+    def _process_abbreviations_data(self, df: pd.DataFrame) -> dict:
+        """Process abbreviations data into a mapping dictionary."""
+        abbreviations_map = {}
+
+        if 'Abbreviation' in df.columns and 'Full_Form' in df.columns:
+            for _, row in df.iterrows():
+                if pd.notna(row['Abbreviation']) and pd.notna(row['Full_Form']):
+                    abbr = str(row['Abbreviation']).strip().lower()
+                    full_form = str(row['Full_Form']).strip().lower()
+                    abbreviations_map[abbr] = full_form
+
+        return abbreviations_map
+
+    def _process_user_corrections_data(self, df: pd.DataFrame) -> dict:
+        """Process user corrections data into a mapping dictionary."""
+        corrections_map = {}
+
+        if 'Original_Text' in df.columns and 'Corrected_Text' in df.columns:
+            for _, row in df.iterrows():
+                if pd.notna(row['Original_Text']) and pd.notna(row['Corrected_Text']):
+                    original = str(row['Original_Text']).strip()
+                    corrected = str(row['Corrected_Text']).strip()
+                    corrections_map[original] = corrected
+
+        return corrections_map
 
     def load_equivalencias_data(self, file_path: str) -> dict:
         """
@@ -908,6 +1198,43 @@ class FixacarApp:
         """
         return f"{int(confidence * 100)}%"
 
+    def _shorten_source_name(self, source_name: str) -> str:
+        """
+        Shortens source names for better UI display while preserving key information.
+
+        Args:
+            source_name: Original source name from prediction
+
+        Returns:
+            Shortened source name for UI display
+        """
+        if not source_name:
+            return ""
+
+        # Handle multiple sources (comma-separated)
+        if ", " in source_name:
+            sources = source_name.split(", ")
+            shortened_sources = [self._shorten_source_name(s.strip()) for s in sources]
+            return ", ".join(shortened_sources)
+
+        # Shorten individual source names
+        source = source_name.strip()
+
+        # Maestro sources
+        if source == "Maestro":
+            return "Maestro"
+
+        # Neural Network sources
+        if source == "SKU-NN" or "Neural" in source:
+            return "SKU-NN"
+
+        # Database sources - return full descriptions to see matching methods
+        if source.startswith("DB"):
+            return source  # Return full description
+
+        # Fallback for any other sources
+        return source[:15] + "..." if len(source) > 15 else source
+
     def _get_sku_nn_prediction(self, make: str, model_year: str, series: str, description: str) -> str | None:
         """
         Uses the loaded SKU NN model to predict an SKU.
@@ -1023,7 +1350,7 @@ class FixacarApp:
                 "Prediction Error", "VIN prediction models are not loaded. Cannot proceed.")
             return None
 
-        features = extract_vin_features(vin)
+        features = extract_vin_features_production(vin)
         if not features:
             messagebox.showerror("Prediction Error",
                                  "Could not extract features from VIN.")
@@ -1826,66 +2153,10 @@ class FixacarApp:
                                     print(
                                         f"    Found in DB (Fuzzy Series + Expanded): {sku} (Freq: {frequency}, Conf: {confidence})")
 
-                        # STEP 3: If still no match, try fuzzy description matching with exact series
+                        # STEP 3: Removed fuzzy description matching - only use exact matches
+                        # Fuzzy description matching removed to prevent wrong part suggestions
                         if not suggestions:
-                            print("    No exact description match, trying fuzzy description matching...")
-                            # Get all descriptions for this make/year/series combination
-                            cursor.execute("""
-                                SELECT sku, normalized_description, COUNT(*) as frequency
-                                FROM historical_parts
-                                WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) = LOWER(?)
-                                GROUP BY sku, normalized_description
-                            """, (vin_make, vin_year, vin_series))
-                            all_results = cursor.fetchall()
-
-                            print(f"    🔄 Applying unified preprocessing for Database fuzzy description matching...")
-
-                            # Apply unified preprocessing to input descriptions
-                            preprocessed_original = self.unified_text_preprocessing(original_desc)
-                            preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
-
-                            # Group results by SKU to apply consensus logic
-                            sku_matches = {}  # sku -> [(similarity, frequency, db_desc, match_type)]
-
-                            # Apply fuzzy matching with unified preprocessing
-                            for sku, db_desc, frequency in all_results:
-                                if sku and sku.strip() and db_desc:
-                                    # Apply unified preprocessing to database description
-                                    preprocessed_db_desc = self.unified_text_preprocessing(db_desc)
-
-                                    # Calculate similarity with preprocessed descriptions
-                                    similarity_orig = self._calculate_description_similarity(preprocessed_original, preprocessed_db_desc)
-                                    similarity_exp = self._calculate_description_similarity(preprocessed_expanded, preprocessed_db_desc)
-
-                                    # Use the better similarity score
-                                    if similarity_orig >= similarity_exp and similarity_orig >= 0.7:
-                                        if sku not in sku_matches:
-                                            sku_matches[sku] = []
-                                        sku_matches[sku].append((similarity_orig, frequency, preprocessed_db_desc, "original"))
-                                    elif similarity_exp >= 0.7:
-                                        if sku not in sku_matches:
-                                            sku_matches[sku] = []
-                                        sku_matches[sku].append((similarity_exp, frequency, preprocessed_db_desc, "expanded"))
-
-                            # Process SKU matches with frequency-based confidence and consensus logic
-                            for sku, matches in sku_matches.items():
-                                # Sum frequencies for this SKU across all matching descriptions
-                                total_frequency = sum(match[1] for match in matches)
-                                best_match = max(matches, key=lambda x: x[0])  # Best similarity
-                                similarity, frequency, db_desc, match_type = best_match
-
-                                # Use frequency-based confidence instead of similarity-based
-                                confidence = self.calculate_frequency_based_confidence(total_frequency, "DB (Unified Fuzzy)")
-
-                                # Adjust confidence based on similarity quality
-                                similarity_bonus = (similarity - 0.7) * 0.1  # Up to 0.03 bonus for perfect similarity
-                                final_confidence = round(confidence + similarity_bonus, 3)
-
-                                suggestions = self._aggregate_sku_suggestions(
-                                    suggestions, sku, final_confidence, f"DB (Unified Fuzzy {match_type.title()}: {similarity:.2f})")
-                                print(
-                                    f"    ✅ Found in DB (Unified Fuzzy {match_type.title()}): {sku} (Sim: {similarity:.2f}, Total Freq: {total_frequency}, Conf: {final_confidence})")
-                                print(f"      Input: '{preprocessed_original if match_type == 'original' else preprocessed_expanded}' vs DB: '{db_desc}'")
+                            print("    No exact description matches found. Skipping fuzzy description matching to avoid wrong parts.")
 
                     except Exception as db_err:
                         print(
@@ -1906,64 +2177,29 @@ class FixacarApp:
                         """, (vin_make, vin_year, vin_series))
                         results = cursor.fetchall()
 
-                        print(f"    🔄 Applying unified preprocessing for 3-param fuzzy matching...")
+                        print(f"    🔄 3-param fallback: Only exact description matches allowed...")
 
-                        # Apply unified preprocessing to input descriptions
-                        preprocessed_original = self.unified_text_preprocessing(original_desc)
-                        preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
-
-                        # Group results by SKU to apply consensus logic for 3-param search
-                        sku_matches = {}  # sku -> [(similarity, frequency, db_desc, match_type)]
-
-                        # Apply fuzzy description matching with unified preprocessing
+                        # Process exact matches only (no fuzzy description matching)
                         for sku, db_desc, frequency in results:
                             if sku and sku.strip() and db_desc:
-                                # Apply unified preprocessing to database description
+                                # Apply unified preprocessing to both descriptions for exact comparison
+                                preprocessed_original = self.unified_text_preprocessing(original_desc)
+                                preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
                                 preprocessed_db_desc = self.unified_text_preprocessing(db_desc)
 
-                                similarity_orig = self._calculate_description_similarity(preprocessed_original, preprocessed_db_desc)
-                                similarity_exp = self._calculate_description_similarity(preprocessed_expanded, preprocessed_db_desc)
-
-                                # Use the better similarity score (lower threshold for 3-param fallback)
-                                if similarity_orig >= similarity_exp and similarity_orig >= 0.6:
-                                    if sku not in sku_matches:
-                                        sku_matches[sku] = []
-                                    sku_matches[sku].append((similarity_orig, frequency, preprocessed_db_desc, "original"))
-                                elif similarity_exp >= 0.6:
-                                    if sku not in sku_matches:
-                                        sku_matches[sku] = []
-                                    sku_matches[sku].append((similarity_exp, frequency, preprocessed_db_desc, "expanded"))
-
-                        # Apply consensus logic to 3-param results (more lenient for fallback)
-                        if sku_matches:
-                            # Convert to frequency pairs for consensus analysis
-                            sku_frequency_pairs = []
-                            for sku, matches in sku_matches.items():
-                                total_frequency = sum(match[1] for match in matches)
-                                sku_frequency_pairs.append((sku, total_frequency))
-
-                            # Apply consensus logic with lower threshold for fallback
-                            consensus_skus = self.apply_consensus_logic(sku_frequency_pairs, min_consensus_ratio=0.4)
-
-                            # Process consensus SKUs
-                            for sku, total_frequency in consensus_skus:
-                                if sku in sku_matches:
-                                    best_match = max(sku_matches[sku], key=lambda x: x[0])  # Best similarity
-                                    similarity, frequency, db_desc, match_type = best_match
-
-                                    # Use frequency-based confidence for 3-param fallback
-                                    confidence = self.calculate_frequency_based_confidence(total_frequency, "DB (3-param)")
-
-                                    # Small similarity bonus for 3-param fallback
-                                    similarity_bonus = (similarity - 0.6) * 0.05  # Up to 0.02 bonus
-                                    final_confidence = round(confidence + similarity_bonus, 3)
-
+                                # Only exact matches after preprocessing (no similarity threshold)
+                                if preprocessed_original == preprocessed_db_desc:
+                                    confidence = self.calculate_frequency_based_confidence(frequency, "DB (3-param Exact)")
                                     suggestions = self._aggregate_sku_suggestions(
-                                        suggestions, sku, final_confidence, f"DB (3-param Unified {match_type.title()}: {similarity:.2f})")
-                                    print(
-                                        f"    ✅ Found in DB (3-param Unified {match_type.title()}): {sku} (Sim: {similarity:.2f}, Total Freq: {total_frequency}, Conf: {final_confidence})")
+                                        suggestions, sku, confidence, f"DB (3-param Exact Orig)")
+                                    print(f"    ✅ Found in DB (3-param Exact Orig): {sku} (Freq: {frequency}, Conf: {confidence})")
+                                elif preprocessed_expanded == preprocessed_db_desc:
+                                    confidence = self.calculate_frequency_based_confidence(frequency, "DB (3-param Exact)")
+                                    suggestions = self._aggregate_sku_suggestions(
+                                        suggestions, sku, confidence, f"DB (3-param Exact Exp)")
+                                    print(f"    ✅ Found in DB (3-param Exact Exp): {sku} (Freq: {frequency}, Conf: {confidence})")
 
-                        # STEP 2: If still no results, try fuzzy series + fuzzy description
+                        # STEP 2: If still no results, try fuzzy series + EXACT description only
                         if not suggestions:
                             print(
                                 f"  Final Fallback SQLite search (Fuzzy Series: Make, Year, Series LIKE '%{vin_series}%')...")
@@ -1976,34 +2212,31 @@ class FixacarApp:
                             """, (vin_make, vin_year, f'%{vin_series}%'))
                             fuzzy_results = cursor.fetchall()
 
-                            print(f"    🔄 Applying unified preprocessing for fuzzy series+description matching...")
+                            print(f"    🔄 Applying unified preprocessing for fuzzy series + exact description matching...")
 
                             # Apply unified preprocessing to input descriptions
                             preprocessed_original = self.unified_text_preprocessing(original_desc)
                             preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
 
-                            # Apply fuzzy description matching with unified preprocessing and lower threshold
+                            # Apply EXACT description matching only (no similarity threshold)
                             for sku, db_desc, frequency in fuzzy_results:
                                 if sku and sku.strip() and db_desc:
                                     # Apply unified preprocessing to database description
                                     preprocessed_db_desc = self.unified_text_preprocessing(db_desc)
 
-                                    similarity_orig = self._calculate_description_similarity(preprocessed_original, preprocessed_db_desc)
-                                    similarity_exp = self._calculate_description_similarity(preprocessed_expanded, preprocessed_db_desc)
-
-                                    # Use the better similarity score with higher confidence for unified preprocessing
-                                    if similarity_orig >= similarity_exp and similarity_orig >= 0.5:
-                                        confidence = round(0.2 + 0.3 * similarity_orig, 3)  # Higher confidence for unified preprocessing
+                                    # Only exact matches after preprocessing
+                                    if preprocessed_original == preprocessed_db_desc:
+                                        confidence = self.calculate_frequency_based_confidence(frequency, "DB (Fuzzy Series+Exact Desc)")
                                         suggestions = self._aggregate_sku_suggestions(
-                                            suggestions, sku, confidence, f"DB (Unified Fuzzy Series+Desc Orig: {similarity_orig:.2f})")
+                                            suggestions, sku, confidence, f"DB (Fuzzy Series+Exact Desc Orig)")
                                         print(
-                                            f"    Found in DB (Unified Fuzzy Series+Desc Orig): {sku} (Sim: {similarity_orig:.2f}, Freq: {frequency}, Conf: {confidence})")
-                                    elif similarity_exp >= 0.5:
-                                        confidence = round(0.15 + 0.25 * similarity_exp, 3)  # Higher confidence for unified preprocessing
+                                            f"    Found in DB (Fuzzy Series+Exact Desc Orig): {sku} (Freq: {frequency}, Conf: {confidence})")
+                                    elif preprocessed_expanded == preprocessed_db_desc:
+                                        confidence = self.calculate_frequency_based_confidence(frequency, "DB (Fuzzy Series+Exact Desc)")
                                         suggestions = self._aggregate_sku_suggestions(
-                                            suggestions, sku, confidence, f"DB (Unified Fuzzy Series+Desc Exp: {similarity_exp:.2f})")
+                                            suggestions, sku, confidence, f"DB (Fuzzy Series+Exact Desc Exp)")
                                         print(
-                                            f"    Found in DB (Unified Fuzzy Series+Desc Exp): {sku} (Sim: {similarity_exp:.2f}, Freq: {frequency}, Conf: {confidence})")
+                                            f"    Found in DB (Fuzzy Series+Exact Desc Exp): {sku} (Freq: {frequency}, Conf: {confidence})")
 
                     except Exception as db_err:
                         print(
@@ -2125,11 +2358,37 @@ class FixacarApp:
 
                 print(f"    📊 Results for '{original_desc}': Maestro={len(maestro_suggestions)}, NN={len(nn_suggestions)}, DB={len(db_suggestions)}, Total={len(suggestions_list)}")
 
+                # Create part frame with header that includes correction button
                 part_frame = ttk.LabelFrame(
-                    self.results_grid_container, text=f"{display_desc}", padding=5)
+                    self.results_grid_container, text="", padding=5)
                 self.part_frames_widgets.append(part_frame)
                 part_frame.columnconfigure(0, weight=1)
                 part_frame.config(width=200)
+
+                # Create header frame with description and pencil icon
+                header_frame = ttk.Frame(part_frame)
+                header_frame.pack(fill="x", padx=5, pady=(0, 5))
+                header_frame.columnconfigure(0, weight=1)
+
+                # Description label
+                desc_label = ttk.Label(
+                    header_frame,
+                    text=f"{display_desc}",
+                    font=("", 10, "bold")
+                )
+                desc_label.grid(row=0, column=0, sticky="w")
+
+                # Pencil icon button for corrections
+                pencil_button = ttk.Button(
+                    header_frame,
+                    text="✏️",
+                    width=3,
+                    command=lambda desc=original_desc, display=display_desc: self.open_correction_dialog(desc, display)
+                )
+                pencil_button.grid(row=0, column=1, sticky="e", padx=(5, 0))
+
+                # Add separator
+                ttk.Separator(part_frame, orient='horizontal').pack(fill='x', pady=5)
 
                 if suggestions_list:
                     # Check for auto-preselection (1.00 confidence)
@@ -2169,9 +2428,12 @@ class FixacarApp:
                         # Show all sources if multiple, otherwise just the main source
                         display_source = all_sources if all_sources != source else source
 
+                        # Shorten source names for better UI display
+                        short_source = self._shorten_source_name(display_source)
+
                         rb = ttk.Radiobutton(
                             part_frame,
-                            text=f"{sku} ({self._format_confidence_percentage(conf)}, {display_source})",
+                            text=f"{sku} ({self._format_confidence_percentage(conf)}, {short_source})",
                             variable=self.selection_vars[original_desc],
                             value=sku
                         )
@@ -2529,7 +2791,7 @@ if __name__ == '__main__':
     current_dir = os.getcwd()
     print(f"Current working directory: {current_dir}")
     print(
-        f"Expected Equivalencias.xlsx at: {os.path.join(current_dir, DEFAULT_EQUIVALENCIAS_PATH)}")
+        f"Expected Text_Processing_Rules.xlsx at: {os.path.join(current_dir, DEFAULT_TEXT_PROCESSING_PATH)}")
     print(
         f"Expected/Creating Maestro.xlsx at: {os.path.join(current_dir, DEFAULT_MAESTRO_PATH)}")
     print(

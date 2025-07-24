@@ -9,7 +9,7 @@ from utils.text_utils import normalize_text
 # Default paths (can be overridden by command-line arguments)
 # These paths are relative to the directory where the script is executed from.
 # Assuming execution from 'Source_Files/' (e.g., python src/offline_data_processor.py)
-DEFAULT_EQUIVALENCIAS_PATH = "Equivalencias.xlsx"
+DEFAULT_TEXT_PROCESSING_PATH = "Text_Processing_Rules.xlsx"
 # Using the cleaned version for initial processing as it's smaller.
 # The script can also handle the original Consolidado.json or its chunks if memory allows.
 DEFAULT_CONSOLIDADO_PATH = "Consolidado_cleaned.json"
@@ -21,19 +21,18 @@ DEFAULT_DB_PATH = "data/fixacar_history.db"
 
 def load_equivalencias(file_path: str) -> dict:
     """
-    Loads Equivalencias.xlsx, normalizes terms, and creates a mapping
+    Loads Text_Processing_Rules.xlsx (Equivalencias tab), normalizes terms, and creates a mapping
     from normalized terms to a generated Equivalencia_Row_ID (1-based row index).
-    (Corresponds to TODO Task 1.3, updated for new Excel structure)
+    (Corresponds to TODO Task 1.3, updated for new unified Excel structure)
     """
     print(f"Loading equivalencias from: {file_path}")
     if not os.path.exists(file_path):
-        print(f"Error: Equivalencias file not found at {file_path}")
+        print(f"Error: Text processing rules file not found at {file_path}")
         return {}
 
     try:
-        # Read the Excel file. Pandas will use the first row as headers by default.
-        # The headers are Column1, Column2, etc.
-        df = pd.read_excel(file_path, sheet_name=0)
+        # Read the Equivalencias tab from the unified file
+        df = pd.read_excel(file_path, sheet_name='Equivalencias')
         equivalencias_map = {}
 
         # Iterate through rows, using 1-based index for Equivalencia_Row_ID
@@ -56,10 +55,10 @@ def load_equivalencias(file_path: str) -> dict:
                         equivalencias_map[normalized_term.lower()] = equivalencia_row_id
 
         print(
-            f"Loaded {len(equivalencias_map)} normalized term mappings from {len(df)} rows in Equivalencias.")
+            f"Loaded {len(equivalencias_map)} normalized term mappings from {len(df)} rows in Text_Processing_Rules.xlsx (Equivalencias tab).")
         return equivalencias_map
     except Exception as e:
-        print(f"Error loading or processing Equivalencias.xlsx: {e}")
+        print(f"Error loading or processing Text_Processing_Rules.xlsx: {e}")
         return {}
 
 
@@ -225,8 +224,8 @@ def process_consolidado_data(conn: sqlite3.Connection, consolidado_path: str, eq
 def main():
     parser = argparse.ArgumentParser(
         description="Offline data processor for Fixacar SKU Finder.")
-    parser.add_argument("--equivalencias", default=DEFAULT_EQUIVALENCIAS_PATH,
-                        help="Path to Equivalencias.xlsx file.")
+    parser.add_argument("--text-processing", default=DEFAULT_TEXT_PROCESSING_PATH,
+                        help="Path to Text_Processing_Rules.xlsx file.")
     parser.add_argument("--consolidado", default=DEFAULT_CONSOLIDADO_PATH,
                         help="Path to Consolidado.json file (or a large chunk).")
     parser.add_argument("--dbpath", default=DEFAULT_DB_PATH,
@@ -236,7 +235,7 @@ def main():
     print("--- Starting Offline Data Processing ---")
 
     # 1. Load Equivalencias (Task 1.3)
-    equivalencias_map = load_equivalencias(args.equivalencias)
+    equivalencias_map = load_equivalencias(args.text_processing)
     if not equivalencias_map:
         print("Failed to load equivalencias. Aborting.")
         return
@@ -293,5 +292,5 @@ if __name__ == "__main__":
     # To run this script from the Source_Files directory:
     # python src/offline_data_processor.py
     # Or with custom paths:
-    # python src/offline_data_processor.py --equivalencias ../Equivalencias.xlsx --consolidado ../Consolidado_cleaned.json --dbpath data/fixacar_history.db
+    # python src/offline_data_processor.py --text-processing ../Text_Processing_Rules.xlsx --consolidado ../Consolidado_cleaned.json --dbpath data/fixacar_history.db
     main()

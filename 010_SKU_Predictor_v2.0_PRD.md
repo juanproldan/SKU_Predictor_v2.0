@@ -294,9 +294,10 @@
     * ✅ **`Consolidado.json`**: Large historical bid data file for offline processing
     * ✅ **`New_Consolidado.json`**: Updated data source for incremental processing
     * ✅ **`New_Data.json`**: Extracted new records from comparison process
-    * ✅ **`Equivalencias.xlsx`**: Synonym mapping file (configurable location)
-      - **Format**: Column1, Column2, ..., ColumnN headers
+    * ✅ **`Text_Processing_Rules.xlsx`**: Unified text processing rules file (configurable location)
+      - **Format**: Multi-tab Excel file with Equivalencias, Abbreviations, and User_Corrections tabs
       - **Usage**: Loaded by both main application and offline scripts
+      - **Replaces**: Previous Equivalencias.xlsx file
     * ✅ **`Maestro.xlsx`**: Expert-validated SKU database (configurable location)
       - **Read/Write**: Main application loads and updates this file
       - **Learning mechanism**: Stores user confirmations
@@ -323,11 +324,17 @@
       - **SKU Neural Network**: PyTorch model with optimized architecture
       - **Tokenizer**: Text processing for neural network input
 * **4.3 File Schemas - ✅ IMPLEMENTED:**
-    * ✅ **`Equivalencias.xlsx` Schema**:
-      - **Headers**: `Column1`, `Column2`, ..., `ColumnN` (flexible column count)
-      - **Row structure**: Each row = synonym group, all non-empty cells are synonyms
-      - **ID assignment**: 1-based row index becomes `Equivalencia_Row_ID`
-      - **Processing**: Creates both ID mapping and synonym expansion mapping
+    * ✅ **`Text_Processing_Rules.xlsx` Schema**:
+      - **Equivalencias Tab**: `Column1`, `Column2`, ..., `ColumnN` (flexible column count)
+        - **Row structure**: Each row = synonym group, all non-empty cells are synonyms
+        - **ID assignment**: 1-based row index becomes `Equivalencia_Row_ID`
+        - **Processing**: Creates both ID mapping and synonym expansion mapping
+      - **Abbreviations Tab**: `Abbreviation`, `Full_Form`, `Category`, `Notes`
+        - **Purpose**: Maps automotive abbreviations to full forms (PUER → PUERTA)
+        - **Source**: Migrated from fuzzy_matcher.py AUTOMOTIVE_ABBR dictionary
+      - **User_Corrections Tab**: `Original_Text`, `Corrected_Text`, `Date_Added`, `Usage_Count`, `Last_Used`, `Notes`
+        - **Purpose**: Stores user corrections for learning mechanism
+        - **Priority**: Highest priority in text processing pipeline
 
     * ✅ **`Maestro.xlsx` Schema** (UPDATED - Standardized):
       - **Core columns**: `Maestro_ID`, `VIN_Make`, `VIN_Year_Min`, `VIN_Year_Max`, `VIN_Series_Trim`
@@ -513,18 +520,18 @@
 
 ```
 WEEKLY AUTOMATION (Every Monday):
-├── 2:00 AM: VIN_Trainer.exe
+├── 10:00 PM: VIN_Trainer.exe
 │   ├── Updates VIN→Make/Year/Series models
 │   ├── Processes new VIN patterns
 │   └── Duration: ~15-30 minutes
 │
-├── 2:30 AM: SKU_Trainer_Incremental.exe
+├── 11:00 PM: SKU_Trainer_Incremental.exe
 │   ├── Processes new Consolidado.json data
 │   ├── Updates neural network incrementally
 │   └── Duration: ~30-60 minutes
 
-MONTHLY AUTOMATION (First Monday):
-└── 3:00 AM: SKU_Trainer_Full.exe
+MONTHLY AUTOMATION (First saturday):
+└── 06:00 PM: SKU_Trainer_Full.exe
     ├── Complete neural network retraining
     ├── Processes entire dataset
     ├── Prevents model degradation
@@ -572,6 +579,48 @@ MONTHLY AUTOMATION (First Monday):
 - **Data Preprocessing**: Automated text normalization and validation
 - **Model Versioning**: Automatic backup and version control
 - **Performance Tracking**: Training metrics and model comparison
+
+---
+
+## 🚀 **FUTURE ENHANCEMENTS**
+
+### **📊 Advanced Analytics:**
+- **Performance Dashboards**: Real-time training metrics and model performance
+- **Prediction Confidence Analysis**: Detailed confidence score breakdowns
+- **Data Quality Monitoring**: Automated data validation and quality reports
+
+### **🤖 Machine Learning Improvements:**
+- **Advanced Data Augmentation**: Synthetic data generation for rare SKUs and part descriptions
+- **Ensemble Methods**: Combine multiple models (Neural Network + Traditional ML) for higher accuracy
+- **Transfer Learning**: Leverage pre-trained automotive/parts models for faster training and better accuracy
+- **Active Learning**: Prioritize uncertain predictions for manual review and continuous improvement
+- **Model Architecture Optimization**: Experiment with transformer-based models for better text understanding
+- **Cross-Validation Strategies**: Implement k-fold validation for more robust model evaluation
+
+### **🔧 System Optimizations:**
+- **Distributed Training**: Multi-GPU support for faster model training
+- **Model Compression**: Reduce model size while maintaining accuracy using quantization and pruning
+- **Caching Strategies**: Improve prediction response times with intelligent caching
+- **VIN Data Quality Enhancement**: Advanced VIN cleaning and validation pipelines for VIN predictor
+- **Memory Optimization**: Batch processing improvements for handling larger datasets efficiently
+- **Learning Rate Scheduling**: Advanced optimization techniques for better model convergence
+
+### **🎯 Accuracy Enhancement Goals:**
+- **Target**: Achieve highest possible SKU prediction accuracy (current baseline: 55%)
+- **VIN Prediction**: Improve Make/Year/Series extraction accuracy through better data quality
+- **Confidence Scoring**: Refine confidence calculations for more reliable predictions
+- **Rare SKU Handling**: Specialized techniques for low-frequency parts prediction
+
+### **📊 Latest Training Results (January 23, 2025):**
+- **Enhanced Model Accuracy**: 61.28% (vs 55% baseline) - **+6.28% improvement**
+- **Training Duration**: 4h 12m (86 epochs with early stopping)
+- **Model Architecture**: 128-dim embeddings, 2.26M parameters, 8.6MB
+- **Training Data**: 161,963 records, 11,599 unique SKUs
+- **Phase 1 Improvements**: Successfully implemented and validated
+  - ✅ Enhanced VIN cleaning (91.7% valid VINs)
+  - ✅ Doubled model capacity (64→128 dimensions)
+  - ✅ Optimized learning rate scheduling
+  - ✅ Improved early stopping mechanism
 
 ---
 

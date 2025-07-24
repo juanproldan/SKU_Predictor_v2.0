@@ -20,35 +20,40 @@ import unicodedata
 # This dictionary maps abbreviations to their full forms
 # ALL KEYS ARE LOWERCASE for case-insensitive matching
 AUTOMOTIVE_ABBR = {
-    # Directional terms - LEFT (IZQUIERDA/IZQUIERDO)
+    # NOTE: Single-letter abbreviations (i, d, t) are NOT included here
+    # They are handled by the gender-aware abbreviation system in text_utils.py
+    # which provides proper masculine/feminine agreement based on context
+
+    # Directional terms - LEFT (IZQUIERDA/IZQUIERDO) - Multi-letter only
     "izq": "izquierda",
     "iz": "izquierda",
     "izquier": "izquierda",
     "izquie": "izquierda",
     "izqui": "izquierda",
     "izqu": "izquierda",
-    "i": "izquierda",
+    # "i": removed - handled by gender-aware system
 
-    # Directional terms - RIGHT (DERECHA/DERECHO)
+    # Directional terms - RIGHT (DERECHA/DERECHO) - Multi-letter only
     "der": "derecha",
     "dere": "derecha",
     "derec": "derecha",
     "derech": "derecha",
-    "d": "derecha",
+    # "d": removed - handled by gender-aware system
 
-    # Directional terms - FRONT (DELANTERA/DELANTERO)
+    # Directional terms - FRONT (DELANTERA/DELANTERO) - Multi-letter only
     "del": "delantera",
     "delan": "delantera",
     "delant": "delantera",
     "delante": "delantera",
-    "de": "delantera",
+    # "de": removed - handled by gender-aware system
+    # "dl": removed - handled by gender-aware system
 
-    # Directional terms - REAR (TRASERA/TRASERO)
+    # Directional terms - REAR (TRASERA/TRASERO) - Multi-letter only
     "tra": "trasera",
     "tras": "trasera",
     "trase": "trasera",
     "traser": "trasera",
-    "t": "trasera",
+    # "t": removed - handled by gender-aware system
 
     # Directional terms - SUPERIOR/INFERIOR
     "sup": "superior",
@@ -101,8 +106,6 @@ AUTOMOTIVE_ABBR = {
     "parabr": "parabrisas",
     "parabrisa": "parabrisas",
     "parabris": "parabrisas",
-    "vidrio": "parabrisas",
-    "vidr": "parabrisas",
 
     # Common parts - MOTOR
     "motor": "motor",

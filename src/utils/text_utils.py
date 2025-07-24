@@ -40,6 +40,7 @@ def smart_dot_handling(text: str) -> str:
     - "GUARDAP.PLAST.TRA.D." → "GUARDAP PLAST TRA D"
     - "PART.123.XYZ" → "PART 123 XYZ"
     - "A.B.C" → "A B C"
+    - "SOP.I.PARAGOLPES DL." → "SOP I PARAGOLPES DL"
 
     Args:
         text: Input text with potential dot separators
@@ -51,8 +52,13 @@ def smart_dot_handling(text: str) -> str:
         return ""
 
     # Replace dots between alphanumeric characters with spaces
-    # Pattern: Letter/Number + Dot + Letter/Number → Replace dot with space
-    text = re.sub(r'([a-zA-Z0-9])\.([a-zA-Z0-9])', r'\1 \2', text)
+    # Use a loop to handle multiple consecutive dots like A.B.C → A B C
+    # The regex only replaces one at a time, so we need to repeat until no more matches
+    while True:
+        new_text = re.sub(r'([a-zA-Z0-9])\.([a-zA-Z0-9])', r'\1 \2', text)
+        if new_text == text:  # No more replacements made
+            break
+        text = new_text
 
     # Remove trailing dots
     text = re.sub(r'\.+$', '', text)
@@ -233,7 +239,7 @@ def expand_linguistic_variations_text(text: str) -> str:
             context_word = find_main_noun_for_context(words, i)
             expanded_word = expand_context_dependent_abbreviation(word, context_word)
         # Handle gender-dependent abbreviations AND full words that need gender agreement
-        elif word in ['i', 'iz', 'izq', 'der', 'dere', 'derec', 'derech', 'del', 'delan', 'delant', 'delante', 'tra', 'tras', 'trase', 'traser',
+        elif word in ['i', 'iz', 'izq', 'der', 'dere', 'derec', 'derech', 'del', 'dl', 'delan', 'delant', 'delante', 'tra', 'tras', 'trase', 'traser',
                      'izquierdo', 'izquierda', 'derecho', 'derecha', 'delantero', 'delantera', 'trasero', 'trasera']:
             # Pass complete context for better gender agreement analysis
             expanded_word = expand_gender_dependent_abbreviation(
@@ -488,7 +494,7 @@ def expand_gender_dependent_abbreviation(abbrev: str, context_word: str, all_wor
         result = 'derecho' if gender == 'masculine' else 'derecha'
         print(f"'{result}'")
         return result
-    elif abbrev in ['del', 'delan', 'delant', 'delante', 'delantero', 'delantera']:
+    elif abbrev in ['del', 'dl', 'delan', 'delant', 'delante', 'delantero', 'delantera']:
         result = 'delantero' if gender == 'masculine' else 'delantera'
         print(f"'{result}'")
         return result
