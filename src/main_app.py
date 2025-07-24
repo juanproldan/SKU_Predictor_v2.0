@@ -863,15 +863,27 @@ class FixacarApp:
         return equivalencias_map
 
     def _process_abbreviations_data(self, df: pd.DataFrame) -> dict:
-        """Process abbreviations data into a mapping dictionary."""
+        """Process abbreviations data into a mapping dictionary using canonical structure."""
         abbreviations_map = {}
 
-        if 'Abbreviation' in df.columns and 'Full_Form' in df.columns:
-            for _, row in df.iterrows():
-                if pd.notna(row['Abbreviation']) and pd.notna(row['Full_Form']):
-                    abbr = str(row['Abbreviation']).strip().lower()
-                    full_form = str(row['Full_Form']).strip().lower()
-                    abbreviations_map[abbr] = full_form
+        # Process each row as a canonical group (like equivalencias)
+        for index, row in df.iterrows():
+            # Get all non-empty cells in the row
+            canonical_group = []
+            for col in df.columns:
+                if pd.notna(row[col]) and str(row[col]).strip():
+                    term = str(row[col]).strip().lower()
+                    canonical_group.append(term)
+
+            if len(canonical_group) >= 2:  # Need at least canonical form + 1 abbreviation
+                canonical_form = canonical_group[0]  # First column is the canonical form
+                abbreviations = canonical_group[1:]  # Rest are abbreviations
+
+                # Map all abbreviations to the canonical form
+                for abbr in abbreviations:
+                    abbreviations_map[abbr] = canonical_form
+
+                print(f"    Abbreviation group: {canonical_form} ← {', '.join(abbreviations)}")
 
         return abbreviations_map
 
