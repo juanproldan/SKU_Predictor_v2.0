@@ -126,7 +126,6 @@ hidden_imports = list(set(hidden_imports))
 # Define data files to include
 datas = [
     (source_files_path, 'Source_Files'),
-    (data_path, 'data'),
     (models_path, 'models'),
     (src_path, 'src'),
 ]
