@@ -20,16 +20,34 @@ pyinstaller --onefile --windowed --name "Fixacar_SKU_Predictor" ^
     --add-data "Source_Files;Source_Files" ^
     --add-data "data;data" ^
     --add-data "models;models" ^
-    --hidden-import torch ^
-    --hidden-import sklearn ^
+    --add-data "src;src" ^
+    --hidden-import numpy ^
     --hidden-import pandas ^
     --hidden-import openpyxl ^
     --hidden-import joblib ^
     --hidden-import sqlite3 ^
+    --hidden-import torch ^
+    --hidden-import torch.nn ^
+    --hidden-import torch.optim ^
+    --hidden-import torch.utils.data ^
+    --hidden-import sklearn ^
+    --hidden-import sklearn.preprocessing ^
+    --hidden-import sklearn.model_selection ^
+    --hidden-import sklearn.metrics ^
+    --hidden-import sklearn.naive_bayes ^
     --hidden-import tkinter ^
     --hidden-import tkinter.ttk ^
     --hidden-import tkinter.messagebox ^
     --hidden-import tkinter.filedialog ^
+    --hidden-import collections ^
+    --hidden-import datetime ^
+    --hidden-import json ^
+    --hidden-import re ^
+    --hidden-import fuzzywuzzy ^
+    --hidden-import Levenshtein ^
+    --collect-submodules torch ^
+    --collect-submodules sklearn ^
+    --collect-submodules numpy ^
     --icon=NONE ^
     src/main_app.py
 
@@ -45,11 +63,24 @@ pyinstaller --onefile --console --name "Fixacar_VIN_Trainer" ^
     --add-data "Source_Files;Source_Files" ^
     --add-data "data;data" ^
     --add-data "models;models" ^
-    --hidden-import torch ^
-    --hidden-import sklearn ^
+    --add-data "src;src" ^
+    --hidden-import numpy ^
     --hidden-import pandas ^
     --hidden-import sqlite3 ^
     --hidden-import joblib ^
+    --hidden-import torch ^
+    --hidden-import torch.nn ^
+    --hidden-import torch.optim ^
+    --hidden-import torch.utils.data ^
+    --hidden-import sklearn ^
+    --hidden-import sklearn.preprocessing ^
+    --hidden-import sklearn.model_selection ^
+    --hidden-import sklearn.metrics ^
+    --hidden-import sklearn.naive_bayes ^
+    --hidden-import re ^
+    --collect-submodules torch ^
+    --collect-submodules sklearn ^
+    --collect-submodules numpy ^
     src/train_vin_predictor.py
 
 if %errorlevel% equ 0 (
@@ -64,12 +95,24 @@ pyinstaller --onefile --console --name "Fixacar_SKU_Trainer" ^
     --add-data "Source_Files;Source_Files" ^
     --add-data "data;data" ^
     --add-data "models;models" ^
-    --hidden-import torch ^
-    --hidden-import sklearn ^
+    --add-data "src;src" ^
+    --hidden-import numpy ^
     --hidden-import pandas ^
     --hidden-import sqlite3 ^
     --hidden-import joblib ^
-    --hidden-import numpy ^
+    --hidden-import torch ^
+    --hidden-import torch.nn ^
+    --hidden-import torch.optim ^
+    --hidden-import torch.utils.data ^
+    --hidden-import torch.optim.lr_scheduler ^
+    --hidden-import sklearn ^
+    --hidden-import sklearn.preprocessing ^
+    --hidden-import sklearn.model_selection ^
+    --hidden-import sklearn.metrics ^
+    --hidden-import time ^
+    --collect-submodules torch ^
+    --collect-submodules sklearn ^
+    --collect-submodules numpy ^
     src/train_sku_nn_predictor_pytorch_optimized.py
 
 if %errorlevel% equ 0 (

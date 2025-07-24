@@ -162,6 +162,8 @@ venv_tf/
 models/
 data/
 Fixacar_Deploy/
+Fixacar_Deployment_Package/
+Fixacar_Deployment_Package.zip
 00_Separador de Json por Plataforma/
 
 # Exclude executables and large binary files
