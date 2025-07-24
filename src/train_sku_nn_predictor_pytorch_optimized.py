@@ -6,6 +6,7 @@ This version includes performance optimizations for faster training.
 import pandas as pd
 import numpy as np
 import os
+import sys
 import sqlite3
 import joblib
 import time
@@ -29,10 +30,20 @@ except ImportError:
             return text.lower().strip()
 
 # --- Configuration ---
-DB_PATH = "data/fixacar_history.db"
-MAESTRO_PATH = "data/Maestro.xlsx"  # Optional, if it contains useful data
-VIN_MODEL_DIR = "models"  # Directory for VIN detail predictor models
-SKU_NN_MODEL_DIR = "models/sku_nn"  # Directory for SKU NN model and preprocessors
+def get_base_path():
+    """Get the base path for the application, works for both script and executable."""
+    if getattr(sys, 'frozen', False):
+        # Running as executable
+        return os.path.dirname(sys.executable)
+    else:
+        # Running as script
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+BASE_PATH = get_base_path()
+DB_PATH = os.path.join(BASE_PATH, "data", "processed_consolidado.db")
+MAESTRO_PATH = os.path.join(BASE_PATH, "data", "Maestro.xlsx")  # Optional, if it contains useful data
+VIN_MODEL_DIR = os.path.join(BASE_PATH, "models")  # Directory for VIN detail predictor models
+SKU_NN_MODEL_DIR = os.path.join(BASE_PATH, "models", "sku_nn")  # Directory for SKU NN model and preprocessors
 MIN_SKU_FREQUENCY = 3  # Minimum times an SKU must appear to be included in training
 VOCAB_SIZE = 10000  # Max number of words to keep in the vocabulary
 MAX_SEQUENCE_LENGTH = 30  # Reduced from 50 to 30
@@ -155,7 +166,7 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
 
         # Get the latest records (assuming higher IDs are newer)
         # This is a simple approach - in production you'd want actual timestamps
-        total_query = "SELECT COUNT(*) FROM historical_parts WHERE sku IS NOT NULL"
+        total_query = "SELECT COUNT(*) FROM processed_consolidado WHERE sku IS NOT NULL"
         total_count = pd.read_sql_query(total_query, conn).iloc[0, 0]
 
         # Take approximately the last week's worth of data (estimate)
@@ -164,7 +175,7 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
 
         query = f"""
         SELECT vin_number, normalized_description, sku
-        FROM historical_parts
+        FROM processed_consolidado
         WHERE sku IS NOT NULL
         ORDER BY id DESC
         LIMIT {recent_limit}
@@ -176,9 +187,9 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
 
         # Optionally limit the data size for faster testing
         if SAMPLE_SIZE:
-            query = f"SELECT vin_number, normalized_description, sku FROM historical_parts WHERE sku IS NOT NULL LIMIT {SAMPLE_SIZE}"
+            query = f"SELECT vin_number, normalized_description, sku FROM processed_consolidado WHERE sku IS NOT NULL LIMIT {SAMPLE_SIZE}"
         else:
-            query = "SELECT vin_number, normalized_description, sku FROM historical_parts WHERE sku IS NOT NULL"
+            query = "SELECT vin_number, normalized_description, sku FROM processed_consolidado WHERE sku IS NOT NULL"
 
     if not os.path.exists(DB_PATH):
         print(f"Error: Database file not found at {DB_PATH}")
@@ -188,7 +199,7 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
     conn.close()
 
     print(
-        f"Loaded {len(df_history)} records from historical_parts in {time.time() - start_time:.2f} seconds.")
+        f"Loaded {len(df_history)} records from processed_consolidado in {time.time() - start_time:.2f} seconds.")
 
     # Process Maestro data if available
     if os.path.exists(MAESTRO_PATH):

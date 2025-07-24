@@ -1,4 +1,5 @@
 import os
+import sys
 import pandas as pd
 import sqlite3
 import torch
@@ -13,8 +14,18 @@ import joblib
 import re
 
 # --- Configuration ---
-CONSOLIDADO_DB_PATH = "data/consolidado.db"
-MODEL_OUTPUT_DIR = "models"
+def get_base_path():
+    """Get the base path for the application, works for both script and executable."""
+    if getattr(sys, 'frozen', False):
+        # Running as executable
+        return os.path.dirname(sys.executable)
+    else:
+        # Running as script
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+BASE_PATH = get_base_path()
+CONSOLIDADO_DB_PATH = os.path.join(BASE_PATH, "data", "processed_consolidado.db")
+MODEL_OUTPUT_DIR = os.path.join(BASE_PATH, "models")
 # Define minimum frequency for a category to be considered (helps with rare makes/series)
 MIN_CATEGORY_FREQUENCY = 5
 
@@ -213,7 +224,7 @@ def load_and_prepare_data():
         # Query the database for relevant data
         query = """
         SELECT vin_number, vin_make as maker, vin_year as fabrication_year, vin_series as series
-        FROM filtered_bids
+        FROM processed_consolidado
         WHERE vin_number IS NOT NULL
           AND vin_make IS NOT NULL
           AND vin_year IS NOT NULL

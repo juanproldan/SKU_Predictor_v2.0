@@ -58,7 +58,7 @@ def get_resource_path(relative_path):
 DEFAULT_TEXT_PROCESSING_PATH = get_resource_path(os.path.join(
     "Source_Files", "Text_Processing_Rules.xlsx"))
 DEFAULT_MAESTRO_PATH = get_resource_path(os.path.join("data", "Maestro.xlsx"))
-DEFAULT_DB_PATH = get_resource_path(os.path.join("data", "fixacar_history.db"))
+DEFAULT_DB_PATH = get_resource_path(os.path.join("data", "processed_consolidado.db"))
 MODEL_DIR = get_resource_path("models")
 SKU_NN_MODEL_DIR = os.path.join(MODEL_DIR, "sku_nn")
 
@@ -2248,7 +2248,7 @@ class FixacarApp:
                         # First try exact series match (CASE-INSENSITIVE)
                         cursor.execute("""
                             SELECT sku, COUNT(*) as frequency
-                            FROM historical_parts
+                            FROM processed_consolidado
                             WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) = LOWER(?) AND LOWER(normalized_description) = LOWER(?)
                             GROUP BY sku
                             ORDER BY COUNT(*) DESC
@@ -2263,7 +2263,7 @@ class FixacarApp:
 
                             cursor.execute("""
                                 SELECT sku, COUNT(*) as frequency
-                                FROM historical_parts
+                                FROM processed_consolidado
                                 WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ?
                                 AND (LOWER(vin_series) = LOWER(?) OR LOWER(vin_series) LIKE LOWER(?) OR LOWER(vin_series) LIKE LOWER(?))
                                 AND LOWER(normalized_description) = LOWER(?)
@@ -2291,7 +2291,7 @@ class FixacarApp:
                             # First try exact series match (CASE-INSENSITIVE)
                             cursor.execute("""
                                 SELECT sku, COUNT(*) as frequency
-                                FROM historical_parts
+                                FROM processed_consolidado
                                 WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) = LOWER(?) AND LOWER(normalized_description) = LOWER(?)
                                 GROUP BY sku
                                 ORDER BY COUNT(*) DESC
@@ -2306,7 +2306,7 @@ class FixacarApp:
 
                                 cursor.execute("""
                                     SELECT sku, COUNT(*) as frequency
-                                    FROM historical_parts
+                                    FROM processed_consolidado
                                     WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ?
                                     AND (LOWER(vin_series) = LOWER(?) OR LOWER(vin_series) LIKE LOWER(?) OR LOWER(vin_series) LIKE LOWER(?))
                                     AND LOWER(normalized_description) = LOWER(?)
@@ -2341,7 +2341,7 @@ class FixacarApp:
                             print("    No exact series match, trying fuzzy series matching with abbreviated description...")
                             cursor.execute("""
                                 SELECT sku, COUNT(*) as frequency
-                                FROM historical_parts
+                                FROM processed_consolidado
                                 WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) LIKE LOWER(?) AND LOWER(normalized_description) = LOWER(?)
                                 GROUP BY sku
                                 ORDER BY COUNT(*) DESC
@@ -2370,7 +2370,7 @@ class FixacarApp:
                             print("    No match with abbreviated, trying fuzzy series matching with original description...")
                             cursor.execute("""
                                 SELECT sku, COUNT(*) as frequency
-                                FROM historical_parts
+                                FROM processed_consolidado
                                 WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) LIKE LOWER(?) AND LOWER(normalized_description) = LOWER(?)
                                 GROUP BY sku
                             """, (vin_make, vin_year, f'%{vin_series}%', normalized_original))
@@ -2390,7 +2390,7 @@ class FixacarApp:
                             print("    No match with original description, trying fuzzy series matching with expanded description...")
                             cursor.execute("""
                                 SELECT sku, COUNT(*) as frequency
-                                FROM historical_parts
+                                FROM processed_consolidado
                                 WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) LIKE LOWER(?) AND LOWER(normalized_description) = LOWER(?)
                                 GROUP BY sku
                             """, (vin_make, vin_year, f'%{vin_series}%', normalized_expanded))
@@ -2422,7 +2422,7 @@ class FixacarApp:
                         # STEP 1: Try exact series match with fuzzy description
                         cursor.execute("""
                             SELECT sku, normalized_description, COUNT(*) as frequency
-                            FROM historical_parts
+                            FROM processed_consolidado
                             WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) = LOWER(?)
                             GROUP BY sku, normalized_description
                             ORDER BY frequency DESC
@@ -2457,7 +2457,7 @@ class FixacarApp:
                                 f"  Final Fallback SQLite search (Fuzzy Series: Make, Year, Series LIKE '%{vin_series}%')...")
                             cursor.execute("""
                                 SELECT sku, normalized_description, COUNT(*) as frequency
-                                FROM historical_parts
+                                FROM processed_consolidado
                                 WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) LIKE LOWER(?)
                                 GROUP BY sku, normalized_description
                                 ORDER BY frequency DESC
