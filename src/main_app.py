@@ -405,18 +405,124 @@ class FixacarApp:
         """
         Apply user corrections from the User_Corrections tab.
         This has the HIGHEST priority in text processing.
+        Applies both phrase-level and intelligent word-level corrections.
         """
         if not text or not user_corrections_map_global:
             return text
 
-        # Check for exact match first
+        # Step 1: Check for exact phrase match first (highest priority)
         if text in user_corrections_map_global:
             corrected = user_corrections_map_global[text]
-            print(f"    ✅ User correction applied: '{text}' → '{corrected}'")
+            print(f"    ✅ Phrase correction applied: '{text}' → '{corrected}'")
             return corrected
 
-        # Could add fuzzy matching for user corrections here in the future
+        # Step 2: Apply word-level corrections with context awareness
+        corrected_text = self._apply_word_level_corrections(text)
+        if corrected_text != text:
+            print(f"    ✨ Word-level corrections applied: '{text}' → '{corrected_text}'")
+            return corrected_text
+
         return text
+
+    def _apply_word_level_corrections(self, text: str) -> str:
+        """
+        Apply context-aware word-level corrections learned from user feedback.
+        """
+        from utils.text_utils import NOUN_GENDERS
+
+        words = text.split()
+        corrected_words = words.copy()
+
+        # Look for word-level correction patterns in the corrections map
+        for correction_key, correction_value in user_corrections_map_global.items():
+            if correction_key.startswith("WORD: "):
+                # Parse the word correction pattern
+                word_pattern = self._parse_word_correction_pattern(correction_key, correction_value)
+                if word_pattern:
+                    # Apply this word correction if context matches
+                    corrected_words = self._apply_word_pattern(corrected_words, word_pattern)
+
+        return ' '.join(corrected_words)
+
+    def _parse_word_correction_pattern(self, correction_key: str, correction_value: str) -> dict:
+        """
+        Parse a word correction pattern from the stored format.
+        Example: "WORD: DERECHO → DERECHA (after_feminine_noun)"
+        """
+        try:
+            # Remove "WORD: " prefix
+            pattern_part = correction_key[6:]  # Remove "WORD: "
+
+            # Split on " → " to get original and corrected word
+            if " → " in pattern_part:
+                parts = pattern_part.split(" → ")
+                original_word = parts[0].strip()
+
+                # The second part might have context in parentheses
+                remaining = parts[1].strip()
+                if "(" in remaining and remaining.endswith(")"):
+                    # Extract corrected word and context
+                    paren_pos = remaining.find("(")
+                    corrected_word = remaining[:paren_pos].strip()
+                    context_type = remaining[paren_pos+1:-1].strip()  # Remove parentheses
+                else:
+                    corrected_word = remaining
+                    context_type = "unknown"
+
+                return {
+                    'original_word': original_word,
+                    'corrected_word': correction_value,  # Use the actual correction value
+                    'context_type': context_type
+                }
+        except Exception as e:
+            print(f"    ⚠️ Error parsing word pattern '{correction_key}': {e}")
+
+        return None
+
+    def _apply_word_pattern(self, words: list, pattern: dict) -> list:
+        """
+        Apply a word correction pattern to a list of words if context matches.
+        """
+        from utils.text_utils import NOUN_GENDERS
+
+        corrected_words = words.copy()
+        original_word = pattern['original_word'].lower()
+        corrected_word = pattern['corrected_word'].lower()
+        context_type = pattern['context_type']
+
+        for i, word in enumerate(words):
+            if word.lower() == original_word:
+                # Check if context matches
+                should_apply = False
+
+                if context_type == "unknown":
+                    # Apply without context checking
+                    should_apply = True
+                elif context_type.startswith("after_") and context_type.endswith("_noun"):
+                    # Check for preceding noun with matching gender
+                    required_gender = context_type.replace("after_", "").replace("_noun", "")
+
+                    # Look for preceding noun within 3 words
+                    for j in range(max(0, i - 3), i):
+                        preceding_word = words[j].lower()
+                        if preceding_word in NOUN_GENDERS:
+                            if NOUN_GENDERS[preceding_word] == required_gender:
+                                should_apply = True
+                                print(f"    🎯 Context match: '{word}' after {required_gender} noun '{preceding_word}'")
+                            break
+
+                if should_apply:
+                    # Preserve original case pattern
+                    if word.isupper():
+                        corrected_words[i] = corrected_word.upper()
+                    elif word.istitle():
+                        corrected_words[i] = corrected_word.capitalize()
+                    else:
+                        corrected_words[i] = corrected_word
+
+                    print(f"    🔧 Applied word correction: '{word}' → '{corrected_words[i]}'")
+
+        return corrected_words
 
     def apply_abbreviations(self, text: str) -> str:
         """
@@ -444,13 +550,16 @@ class FixacarApp:
 
     def save_user_correction(self, original_text: str, corrected_text: str):
         """
-        Save a user correction to both memory and the Excel file.
-        This enables the learning mechanism.
+        Save a user correction with both phrase-level and intelligent word-level learning.
+        This enables context-aware learning that understands gender agreement rules.
         """
         global user_corrections_map_global
 
-        # Update in-memory map
+        # Update in-memory map for phrase-level corrections
         user_corrections_map_global[original_text] = corrected_text
+
+        # Analyze the correction for word-level learning
+        word_level_corrections = self._analyze_correction_for_word_learning(original_text, corrected_text)
 
         # Update Excel file
         try:
@@ -458,7 +567,7 @@ class FixacarApp:
             file_path = DEFAULT_TEXT_PROCESSING_PATH
             user_corrections_df = pd.read_excel(file_path, sheet_name='User_Corrections')
 
-            # Check if correction already exists
+            # Save phrase-level correction
             existing_mask = user_corrections_df['Original_Text'] == original_text
 
             if existing_mask.any():
@@ -466,19 +575,23 @@ class FixacarApp:
                 user_corrections_df.loc[existing_mask, 'Corrected_Text'] = corrected_text
                 user_corrections_df.loc[existing_mask, 'Last_Used'] = pd.Timestamp.now()
                 user_corrections_df.loc[existing_mask, 'Usage_Count'] = user_corrections_df.loc[existing_mask, 'Usage_Count'] + 1
-                print(f"    📚 Updated existing user correction: '{original_text}' → '{corrected_text}'")
+                print(f"    📚 Updated existing phrase correction: '{original_text}' → '{corrected_text}'")
             else:
-                # Add new correction
+                # Add new phrase correction
                 new_row = {
                     'Original_Text': original_text,
                     'Corrected_Text': corrected_text,
                     'Date_Added': pd.Timestamp.now(),
                     'Usage_Count': 1,
                     'Last_Used': pd.Timestamp.now(),
-                    'Notes': 'User correction'
+                    'Notes': 'User phrase correction'
                 }
                 user_corrections_df = pd.concat([user_corrections_df, pd.DataFrame([new_row])], ignore_index=True)
-                print(f"    📚 Added new user correction: '{original_text}' → '{corrected_text}'")
+                print(f"    📚 Added new phrase correction: '{original_text}' → '{corrected_text}'")
+
+            # Save word-level corrections
+            for word_correction in word_level_corrections:
+                self._save_word_level_correction(user_corrections_df, word_correction)
 
             # Save back to Excel (preserve other tabs)
             with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
@@ -486,6 +599,110 @@ class FixacarApp:
 
         except Exception as e:
             print(f"    ⚠️ Error saving user correction: {e}")
+
+    def _analyze_correction_for_word_learning(self, original_text: str, corrected_text: str) -> list:
+        """
+        Analyze a user correction to extract intelligent word-level learning patterns.
+        Returns a list of context-aware word corrections.
+        """
+        original_words = original_text.split()
+        corrected_words = corrected_text.split()
+
+        word_corrections = []
+
+        # Only process if the texts have the same number of words (simple word substitutions)
+        if len(original_words) == len(corrected_words):
+            for i, (orig_word, corr_word) in enumerate(zip(original_words, corrected_words)):
+                if orig_word != corr_word:
+                    # Found a word-level change
+                    context = self._analyze_word_context(original_words, i)
+
+                    word_correction = {
+                        'original_word': orig_word,
+                        'corrected_word': corr_word,
+                        'context': context,
+                        'position': i,
+                        'full_phrase': original_text
+                    }
+                    word_corrections.append(word_correction)
+
+                    print(f"    🔍 Word-level learning: '{orig_word}' → '{corr_word}' (context: {context['type']})")
+
+        return word_corrections
+
+    def _analyze_word_context(self, words: list, position: int) -> dict:
+        """
+        Analyze the grammatical context of a word to understand correction patterns.
+        """
+        from utils.text_utils import NOUN_GENDERS
+
+        context = {
+            'type': 'unknown',
+            'preceding_noun': None,
+            'preceding_noun_gender': None,
+            'following_noun': None,
+            'following_noun_gender': None
+        }
+
+        # Look for preceding nouns (within 3 words)
+        for i in range(max(0, position - 3), position):
+            word = words[i].lower()
+            if word in NOUN_GENDERS:
+                context['preceding_noun'] = word
+                context['preceding_noun_gender'] = NOUN_GENDERS[word]
+                context['type'] = f'after_{NOUN_GENDERS[word]}_noun'
+                break
+
+        # Look for following nouns (within 2 words)
+        for i in range(position + 1, min(len(words), position + 3)):
+            word = words[i].lower()
+            if word in NOUN_GENDERS:
+                context['following_noun'] = word
+                context['following_noun_gender'] = NOUN_GENDERS[word]
+                if context['type'] == 'unknown':
+                    context['type'] = f'before_{NOUN_GENDERS[word]}_noun'
+                break
+
+        return context
+
+    def _save_word_level_correction(self, df: pd.DataFrame, word_correction: dict):
+        """
+        Save a word-level correction to the DataFrame.
+        """
+        # Create a unique identifier for this word correction pattern
+        word_pattern = f"WORD: {word_correction['original_word']} → {word_correction['corrected_word']}"
+        context_info = word_correction['context']
+
+        if context_info['type'] != 'unknown':
+            word_pattern += f" ({context_info['type']})"
+
+        # Check if this word-level correction already exists
+        existing_word_mask = df['Original_Text'] == word_pattern
+
+        if existing_word_mask.any():
+            # Update existing word correction
+            df.loc[existing_word_mask, 'Last_Used'] = pd.Timestamp.now()
+            df.loc[existing_word_mask, 'Usage_Count'] = df.loc[existing_word_mask, 'Usage_Count'] + 1
+            print(f"    🔄 Updated word-level pattern: {word_pattern}")
+        else:
+            # Add new word correction
+            notes = f"Word-level learning from: '{word_correction['full_phrase']}'"
+            if context_info['preceding_noun']:
+                notes += f" | Preceding noun: {context_info['preceding_noun']} ({context_info['preceding_noun_gender']})"
+
+            new_word_row = {
+                'Original_Text': word_pattern,
+                'Corrected_Text': word_correction['corrected_word'],
+                'Date_Added': pd.Timestamp.now(),
+                'Usage_Count': 1,
+                'Last_Used': pd.Timestamp.now(),
+                'Notes': notes
+            }
+
+            # Add to DataFrame
+            new_df = pd.DataFrame([new_word_row])
+            df = pd.concat([df, new_df], ignore_index=True)
+            print(f"    ✨ Added word-level pattern: {word_pattern}")
 
     def open_correction_dialog(self, original_desc: str, display_desc: str):
         """
@@ -888,7 +1105,7 @@ class FixacarApp:
         return abbreviations_map
 
     def _process_user_corrections_data(self, df: pd.DataFrame) -> dict:
-        """Process user corrections data into a mapping dictionary."""
+        """Process user corrections data into a mapping dictionary for both phrase and word-level corrections."""
         corrections_map = {}
 
         if 'Original_Text' in df.columns and 'Corrected_Text' in df.columns:
@@ -897,6 +1114,12 @@ class FixacarApp:
                     original = str(row['Original_Text']).strip()
                     corrected = str(row['Corrected_Text']).strip()
                     corrections_map[original] = corrected
+
+                    # Log the type of correction being loaded
+                    if original.startswith("WORD: "):
+                        print(f"    🔧 Loaded word-level pattern: {original}")
+                    else:
+                        print(f"    📝 Loaded phrase correction: {original} → {corrected}")
 
         return corrections_map
 
