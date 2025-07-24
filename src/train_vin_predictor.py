@@ -24,7 +24,7 @@ def get_base_path():
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 BASE_PATH = get_base_path()
-CONSOLIDADO_DB_PATH = os.path.join(BASE_PATH, "data", "processed_consolidado.db")
+CONSOLIDADO_DB_PATH = os.path.join(BASE_PATH, "Source_Files", "processed_consolidado.db")
 MODEL_OUTPUT_DIR = os.path.join(BASE_PATH, "models")
 # Define minimum frequency for a category to be considered (helps with rare makes/series)
 MIN_CATEGORY_FREQUENCY = 5

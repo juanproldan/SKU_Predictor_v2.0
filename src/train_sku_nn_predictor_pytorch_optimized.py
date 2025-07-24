@@ -40,8 +40,8 @@ def get_base_path():
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 BASE_PATH = get_base_path()
-DB_PATH = os.path.join(BASE_PATH, "data", "processed_consolidado.db")
-MAESTRO_PATH = os.path.join(BASE_PATH, "data", "Maestro.xlsx")  # Optional, if it contains useful data
+DB_PATH = os.path.join(BASE_PATH, "Source_Files", "processed_consolidado.db")
+MAESTRO_PATH = os.path.join(BASE_PATH, "Source_Files", "Maestro.xlsx")  # Optional, if it contains useful data
 VIN_MODEL_DIR = os.path.join(BASE_PATH, "models")  # Directory for VIN detail predictor models
 SKU_NN_MODEL_DIR = os.path.join(BASE_PATH, "models", "sku_nn")  # Directory for SKU NN model and preprocessors
 MIN_SKU_FREQUENCY = 3  # Minimum times an SKU must appear to be included in training

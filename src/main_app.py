@@ -57,8 +57,8 @@ def get_resource_path(relative_path):
 # --- Configuration (using resource path) ---
 DEFAULT_TEXT_PROCESSING_PATH = get_resource_path(os.path.join(
     "Source_Files", "Text_Processing_Rules.xlsx"))
-DEFAULT_MAESTRO_PATH = get_resource_path(os.path.join("data", "Maestro.xlsx"))
-DEFAULT_DB_PATH = get_resource_path(os.path.join("data", "processed_consolidado.db"))
+DEFAULT_MAESTRO_PATH = get_resource_path(os.path.join("Source_Files", "Maestro.xlsx"))
+DEFAULT_DB_PATH = get_resource_path(os.path.join("Source_Files", "processed_consolidado.db"))
 MODEL_DIR = get_resource_path("models")
 SKU_NN_MODEL_DIR = os.path.join(MODEL_DIR, "sku_nn")
 

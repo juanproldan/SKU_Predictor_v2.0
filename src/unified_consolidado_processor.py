@@ -46,13 +46,12 @@ def get_base_path():
 
 BASE_PATH = get_base_path()
 SOURCE_FILES_DIR = os.path.join(BASE_PATH, "Source_Files")
-DATA_DIR = os.path.join(BASE_PATH, "data")
 LOGS_DIR = os.path.join(BASE_PATH, "logs")
 
-# File paths
+# File paths - everything in Source_Files for unified structure
 CONSOLIDADO_PATH = os.path.join(SOURCE_FILES_DIR, "Consolidado.json")
 TEXT_PROCESSING_PATH = os.path.join(SOURCE_FILES_DIR, "Text_Processing_Rules.xlsx")
-OUTPUT_DB_PATH = os.path.join(DATA_DIR, "processed_consolidado.db")
+OUTPUT_DB_PATH = os.path.join(SOURCE_FILES_DIR, "processed_consolidado.db")
 LOG_PATH = os.path.join(LOGS_DIR, f"consolidado_processing_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 
 # --- Logging Setup ---
@@ -143,9 +142,9 @@ def setup_database(db_path):
     """
     logger = logging.getLogger(__name__)
     logger.info(f"Setting up database at: {db_path}")
-    
+
     try:
-        # Ensure data directory exists
+        # Ensure Source_Files directory exists (unified structure)
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
         conn = sqlite3.connect(db_path)
@@ -432,7 +431,6 @@ def main():
     logger.info("=== Starting Unified Consolidado Processing ===")
     logger.info(f"Base path: {BASE_PATH}")
     logger.info(f"Source files directory: {SOURCE_FILES_DIR}")
-    logger.info(f"Data directory: {DATA_DIR}")
     logger.info(f"Consolidado input: {CONSOLIDADO_PATH}")
     logger.info(f"Text processing rules: {TEXT_PROCESSING_PATH}")
     logger.info(f"Database output: {OUTPUT_DB_PATH}")
