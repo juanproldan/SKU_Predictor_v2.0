@@ -192,6 +192,9 @@ NOUN_GENDERS = {
     'marco': 'masculine',
     'estructura': 'feminine',
     'carroceria': 'feminine',
+    # Gender exceptions (words ending in 'a' but masculine)
+    'emblema': 'masculine',  # Exception: el emblema (not la emblema)
+    'portaplaca': 'masculine',  # Exception: el portaplaca (not la portaplaca)
     'pintura': 'feminine',
     'barniz': 'masculine',
     'esmalte': 'masculine',
@@ -358,7 +361,8 @@ def get_noun_gender(word: str) -> str:
         'estabilizador', 'bieleta', 'tirante', 'travesano', 'larguero',
         'refuerzo', 'marco', 'chasis', 'bastidor', 'capo', 'maletero',
         'techo', 'techo', 'cristal', 'vidrio', 'elevalunas', 'regulador',
-        'guardapolvo', 'broche', 'remache', 'tornillo', 'perno'  # Added missing parts
+        'guardapolvo', 'broche', 'remache', 'tornillo', 'perno',  # Added missing parts
+        'emblema', 'portaplaca'  # Gender exceptions: words ending in 'a' but masculine
     }
 
     # Explicit feminine automotive parts
@@ -519,7 +523,7 @@ def handle_abbreviation_patterns(words: list) -> list:
             if word in {'guia', 'farola', 'luz', 'puerta', 'aleta', 'chapa', 'rejilla', 'parrilla', 'mascara',
                        'guardafango', 'paragolpes', 'espejo', 'faro', 'absorbedor', 'radiador', 'soporte',
                        'guardapolvo', 'bomper', 'bumper', 'capo', 'tapa', 'cubierta', 'moldura',
-                       'broches', 'broche', 'remache', 'remaches'}:
+                       'broches', 'broche', 'remache', 'remaches', 'emblema', 'portaplaca'}:
                 immediate_noun = word
                 break
 
@@ -619,7 +623,7 @@ def find_immediate_noun_for_adjective(words: list, current_index: int) -> str:
                    'guardafango', 'paragolpes', 'espejo', 'faro', 'absorbedor', 'radiador', 'soporte',
                    'bomper', 'bumper', 'capo', 'tapa', 'cubierta', 'moldura', 'maneta', 'cerradura',
                    'guardapolvo', 'broches', 'broche', 'remache', 'remaches', 'tornillo', 'tornillos',
-                   'perno', 'pernos', 'tuerca', 'tuercas', 'arandela', 'arandelas'}:
+                   'perno', 'pernos', 'tuerca', 'tuercas', 'arandela', 'arandelas', 'emblema', 'portaplaca'}:
             return word
 
         # Check if it's a noun based on Spanish grammar rules

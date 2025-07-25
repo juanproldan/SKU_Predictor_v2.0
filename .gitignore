@@ -31,7 +31,7 @@ MANIFEST
 #  Usually these files are written by a CI server
 #  and deployed from artifacts, so they shouldn't be committed.
 *.manifest
-*.spec
+# *.spec  # Commented out - we need .spec files for builds
 
 # Installer logs
 pip-log.txt

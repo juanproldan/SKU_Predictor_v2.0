@@ -150,21 +150,16 @@ def setup_database(db_path):
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        # Create the unified table
+        # Create the unified table - SIMPLIFIED SCHEMA (removed 5 unnecessary columns)
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS processed_consolidado (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
             vin_number TEXT,                    -- Cleaned VINs for VIN training (may be NULL)
             vin_make TEXT,                      -- For both VIN & SKU training
-            vin_model TEXT,                     -- Metadata
             vin_year INTEGER,                   -- For both VIN & SKU training
             vin_series TEXT,                    -- For both VIN & SKU training
-            vin_bodystyle TEXT,                 -- Metadata
             original_description TEXT,          -- For SKU training (may be NULL)
             normalized_description TEXT,        -- For SKU training, processed (may be NULL)
             sku TEXT,                          -- For SKU training (may be NULL)
-            source_bid_id TEXT,                -- Traceability
-            Equivalencia_Row_ID INTEGER,       -- Text processing linkage
             UNIQUE(vin_number, original_description, sku) -- Prevent duplicates
         )
         ''')
@@ -219,16 +214,13 @@ def process_consolidado_record(record, equivalencias_map):
     Process a single record from Consolidado.json.
     Returns processed record data or None if record should be skipped.
     """
-    # Extract all available fields
+    # Extract required fields only (removed unused columns)
     vin = record.get('vin_number')
     make = record.get('vin_make')
-    model = record.get('vin_model')
     year = record.get('vin_year')
     series = record.get('vin_series')
-    bodystyle = record.get('vin_bodystyle')
     description = record.get('item_original_description')
     sku = record.get('item_sku')
-    source_bid_id = record.get('source_bid_id')
 
     # Clean VIN if present (but don't discard record if invalid)
     cleaned_vin = clean_vin_for_training(vin) if vin else None
@@ -263,15 +255,11 @@ def process_consolidado_record(record, equivalencias_map):
     return {
         'vin_number': cleaned_vin,
         'vin_make': make,
-        'vin_model': model,
         'vin_year': year,
         'vin_series': series,
-        'vin_bodystyle': bodystyle,
         'original_description': description,
         'normalized_description': normalized_description,
-        'sku': sku,
-        'source_bid_id': source_bid_id,
-        'Equivalencia_Row_ID': equivalencia_row_id
+        'sku': sku
     }
 
 def process_consolidado_to_db(conn, consolidado_path, equivalencias_map):
@@ -316,28 +304,22 @@ def process_consolidado_to_db(conn, consolidado_path, equivalencias_map):
             items = record.get('items', [])
             stats['total_items'] += len(items)
 
-            # Extract VIN info from record level
+            # Extract VIN info from record level (simplified - removed unused fields)
             vin_number = record.get('vin_number')
             vin_make = record.get('maker')  # Field is 'maker' not 'vin_make'
-            vin_model = record.get('model')  # Field is 'model' not 'vin_model'
             vin_year = record.get('fabrication_year')  # Field is 'fabrication_year' not 'vin_year'
             vin_series = record.get('series')  # Field is 'series' not 'vin_series'
-            vin_bodystyle = record.get('vin_bodystyle')  # This might not exist
-            source_bid_id = record.get('quote')  # Use 'quote' as source_bid_id
 
             # Process each item in the record
             for item in items:
-                # Combine record-level and item-level data
+                # Combine record-level and item-level data (simplified schema)
                 combined_record = {
                     'vin_number': vin_number,
                     'vin_make': vin_make,
-                    'vin_model': vin_model,
                     'vin_year': vin_year,
                     'vin_series': vin_series,
-                    'vin_bodystyle': vin_bodystyle,
                     'item_original_description': item.get('descripcion'),  # Field is 'descripcion'
-                    'item_sku': item.get('referencia'),  # Field is 'referencia'
-                    'source_bid_id': source_bid_id
+                    'item_sku': item.get('referencia')  # Field is 'referencia'
                 }
 
                 # Process the combined record
@@ -370,21 +352,17 @@ def process_consolidado_to_db(conn, consolidado_path, equivalencias_map):
                 try:
                     cursor.execute('''
                     INSERT INTO processed_consolidado (
-                        vin_number, vin_make, vin_model, vin_year, vin_series, vin_bodystyle,
-                        original_description, normalized_description, sku, source_bid_id, Equivalencia_Row_ID
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        vin_number, vin_make, vin_year, vin_series,
+                        original_description, normalized_description, sku
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         processed_record['vin_number'],
                         processed_record['vin_make'],
-                        processed_record['vin_model'],
                         processed_record['vin_year'],
                         processed_record['vin_series'],
-                        processed_record['vin_bodystyle'],
                         processed_record['original_description'],
                         processed_record['normalized_description'],
-                        processed_record['sku'],
-                        processed_record['source_bid_id'],
-                        processed_record['Equivalencia_Row_ID']
+                        processed_record['sku']
                     ))
                     stats['inserted_records'] += 1
 

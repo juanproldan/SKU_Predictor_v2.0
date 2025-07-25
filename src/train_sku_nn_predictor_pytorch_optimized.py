@@ -177,7 +177,7 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
         SELECT vin_number, normalized_description, sku
         FROM processed_consolidado
         WHERE sku IS NOT NULL
-        ORDER BY id DESC
+        ORDER BY ROWID DESC
         LIMIT {recent_limit}
         """
         print(f"Loading approximately {recent_limit} recent records for incremental training...")
