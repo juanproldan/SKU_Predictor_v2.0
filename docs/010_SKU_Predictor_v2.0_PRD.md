@@ -92,13 +92,14 @@
     * ✅ **Multi-line Part Descriptions text area** for batch processing
     * ✅ **"Find SKUs" button** with dark styling for visibility
     * ✅ **Two-column layout**: Input frame (60%) and Vehicle Details frame (40%)
-    * ✅ **Scrollable results area** with dynamic column layout
+    * ✅ **Scrollable results area** with responsive grid layout and smart text wrapping
     * ✅ **Radio button selection** interface for SKU confirmation
     * ✅ **Confidence visualization** with source attribution
     * ✅ **Save Confirmed Selections** button for learning mechanism
     * ✅ **Manual SKU entry** option for expert input
     * ✅ **🔧 CASE-INSENSITIVE PROCESSING**: All text matching, database searches, and comparisons are case-insensitive throughout the entire system
     * ✅ **🔄 MULTI-SKU MAESTRO SUPPORT**: Maestro returns ALL matching SKUs ordered by frequency, handling many-to-many relationships between parts and vehicles
+    * ✅ **📱 RESPONSIVE UI DESIGN**: Smart text wrapping and adaptive column layout prevents description truncation, maintains readability with long part descriptions
 
 * **3.2 VIN Decoding & Vehicle Identification - ✅ IMPLEMENTED:**
     * ✅ **17-character VIN validation** with regex pattern matching
@@ -740,7 +741,32 @@ Fixacar_Deployment_Package/
 
 ## 🔧 **RECENT IMPROVEMENTS**
 
-### **Fuzzy Matching Simplification (Latest Update)**
+### **Responsive Grid UI Fix (Latest Update)**
+
+**Problem Solved:**
+- Long part descriptions were being truncated in the UI (e.g., "PUERTA TR...")
+- Cards became too wide with long descriptions, breaking layout
+- Poor readability with inconsistent card sizing
+
+**Solution Implemented:**
+- **Smart Text Wrapping**: 25 characters per line, max 2 lines, respects word boundaries
+- **Enhanced Card Sizing**: Increased width from 200px to 280px for better text display
+- **Intelligent Column Reduction**: Max 3 columns for long descriptions (>40 chars), max 2 for very long (>60 chars)
+- **Consistent Layout**: Added minimum card height (150px) for uniform appearance
+
+**Technical Details:**
+- Enhanced description display logic with word wrapping (lines 2824-2866)
+- Updated card sizing configuration (lines 2812-2821)
+- Smart column calculation based on content complexity (lines 3048-3068)
+- Improved grid width calculations with proper padding (lines 3038-3046)
+
+**Benefits:**
+- ✅ Eliminates truncated descriptions like "PUERTA TR..."
+- ✅ Maintains clean, readable layout with long descriptions
+- ✅ Responsive design adapts to content length automatically
+- ✅ Better user experience with full text visibility
+
+### **Fuzzy Matching Simplification**
 
 **Problem Solved:**
 - Complex fuzzy matching was causing more issues than benefits
