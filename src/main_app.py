@@ -457,6 +457,55 @@ class FixacarApp:
         print(f"    Consensus result: {len(consensus_skus)}/{len(sorted_pairs)} SKUs passed consensus filter")
         return consensus_skus
 
+    def merge_dual_search_results(self, normalized_results: list, original_results: list) -> list:
+        """
+        Merge and deduplicate results from both normalized_description and original_description searches.
+
+        Args:
+            normalized_results: List of (sku, frequency, 'normalized'/'normalized_fuzzy') tuples
+            original_results: List of (sku, frequency, 'original'/'original_fuzzy') tuples
+
+        Returns:
+            Merged list of (sku, frequency) tuples with combined frequencies for duplicate SKUs
+        """
+        # Dictionary to accumulate frequencies for each SKU
+        sku_frequency_map = {}
+        sku_sources = {}  # Track which sources found each SKU
+
+        # Process normalized results
+        for sku, frequency, match_type in normalized_results:
+            if sku not in sku_frequency_map:
+                sku_frequency_map[sku] = 0
+                sku_sources[sku] = []
+            sku_frequency_map[sku] += frequency
+            sku_sources[sku].append(f"norm({match_type})")
+
+        # Process original results
+        for sku, frequency, match_type in original_results:
+            if sku not in sku_frequency_map:
+                sku_frequency_map[sku] = 0
+                sku_sources[sku] = []
+            sku_frequency_map[sku] += frequency
+            sku_sources[sku].append(f"orig({match_type})")
+
+        # Convert back to list format and log results
+        merged_results = [(sku, freq) for sku, freq in sku_frequency_map.items()]
+
+        if merged_results:
+            print(f"    📊 Dual search results merged:")
+            print(f"      - Normalized matches: {len(normalized_results)}")
+            print(f"      - Original matches: {len(original_results)}")
+            print(f"      - Total unique SKUs: {len(merged_results)}")
+
+            # Show details for each SKU
+            for sku, freq in sorted(merged_results, key=lambda x: x[1], reverse=True):
+                sources = ", ".join(sku_sources[sku])
+                print(f"      - {sku}: {freq} total frequency (sources: {sources})")
+        else:
+            print(f"    📊 No matches found in either normalized or original descriptions")
+
+        return merged_results
+
     def unified_text_preprocessing(self, text: str) -> str:
         """
         Unified Text Preprocessing Pipeline for ALL text comparisons in the SKU prediction system.
@@ -2379,29 +2428,29 @@ class FixacarApp:
                     print(
                         f"  Searching SQLite DB (Make: {vin_make}, Year: {vin_year}, Series: {vin_series})...")
                     try:
-                        # DUAL MATCHING STRATEGY: Try exact match first, then normalized match
+                        # DUAL MATCHING STRATEGY: Search both normalized_description AND original_description
 
-                        # STEP 1A: Try exact description match with normalized description
-                        print(f"    Trying exact match with normalized description: '{normalized_original}'")
+                        # STEP 1A: Search normalized_description column
+                        print(f"    Trying normalized_description match: '{normalized_original}'")
 
                         # First try exact series match (CASE-INSENSITIVE)
                         cursor.execute("""
-                            SELECT sku, COUNT(*) as frequency
+                            SELECT sku, COUNT(*) as frequency, 'normalized' as match_type
                             FROM processed_consolidado
                             WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) = LOWER(?) AND LOWER(normalized_description) = LOWER(?)
                             GROUP BY sku
                             ORDER BY COUNT(*) DESC
                         """, (vin_make, vin_year, vin_series, normalized_original))
-                        exact_results = cursor.fetchall()
+                        normalized_results = cursor.fetchall()
 
                         # If no exact series match, try fuzzy series matching (CASE-INSENSITIVE)
-                        if not exact_results:
+                        if not normalized_results:
                             print(f"    No exact series match for '{vin_series}', trying fuzzy series matching...")
                             # Extract base series (remove brackets and extra info)
                             base_series = vin_series.split('[')[0].strip() if '[' in vin_series else vin_series
 
                             cursor.execute("""
-                                SELECT sku, COUNT(*) as frequency
+                                SELECT sku, COUNT(*) as frequency, 'normalized_fuzzy' as match_type
                                 FROM processed_consolidado
                                 WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ?
                                 AND (LOWER(vin_series) = LOWER(?) OR LOWER(vin_series) LIKE LOWER(?) OR LOWER(vin_series) LIKE LOWER(?))
@@ -2409,9 +2458,41 @@ class FixacarApp:
                                 GROUP BY sku
                                 ORDER BY COUNT(*) DESC
                             """, (vin_make, vin_year, base_series, f"{base_series}%", f"%{base_series}%", normalized_original))
-                            exact_results = cursor.fetchall()
-                            if exact_results:
-                                print(f"    ✅ Found {len(exact_results)} unique SKUs via FUZZY SERIES match (base: '{base_series}')")
+                            normalized_results = cursor.fetchall()
+                            if normalized_results:
+                                print(f"    ✅ Found {len(normalized_results)} unique SKUs via FUZZY SERIES match (base: '{base_series}')")
+
+                        # STEP 1B: Search original_description column
+                        print(f"    Trying original_description match: '{original_desc}'")
+
+                        # First try exact series match (CASE-INSENSITIVE)
+                        cursor.execute("""
+                            SELECT sku, COUNT(*) as frequency, 'original' as match_type
+                            FROM processed_consolidado
+                            WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) = LOWER(?) AND LOWER(original_description) = LOWER(?)
+                            GROUP BY sku
+                            ORDER BY COUNT(*) DESC
+                        """, (vin_make, vin_year, vin_series, original_desc))
+                        original_results = cursor.fetchall()
+
+                        # If no exact series match, try fuzzy series matching (CASE-INSENSITIVE)
+                        if not original_results:
+                            # Extract base series (remove brackets and extra info)
+                            base_series = vin_series.split('[')[0].strip() if '[' in vin_series else vin_series
+
+                            cursor.execute("""
+                                SELECT sku, COUNT(*) as frequency, 'original_fuzzy' as match_type
+                                FROM processed_consolidado
+                                WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ?
+                                AND (LOWER(vin_series) = LOWER(?) OR LOWER(vin_series) LIKE LOWER(?) OR LOWER(vin_series) LIKE LOWER(?))
+                                AND LOWER(original_description) = LOWER(?)
+                                GROUP BY sku
+                                ORDER BY COUNT(*) DESC
+                            """, (vin_make, vin_year, base_series, f"{base_series}%", f"%{base_series}%", original_desc))
+                            original_results = cursor.fetchall()
+
+                        # STEP 1C: Merge and deduplicate results from both searches
+                        exact_results = self.merge_dual_search_results(normalized_results, original_results)
 
                         if exact_results:
                             print(f"    ✅ Found {len(exact_results)} unique SKUs via EXACT match")
@@ -2423,28 +2504,39 @@ class FixacarApp:
                                 suggestions = self._aggregate_sku_suggestions(suggestions, sku, final_confidence, "DB-Exact")
                                 print(f"    ✅ Found in DB (Exact Match): {sku} (Freq: {frequency}, Conf: {final_confidence:.4f})")
 
-                        # STEP 1B: If no exact matches, try normalized abbreviated description
+                        # STEP 1B: If no exact matches, try abbreviated description with dual search
                         if not exact_results:
-                            print(f"    No exact matches, trying normalized abbreviated: '{abbreviated_desc}'")
+                            print(f"    No exact matches, trying abbreviated description: '{abbreviated_desc}'")
 
-                            # First try exact series match (CASE-INSENSITIVE)
+                            # Search normalized_description column with abbreviated description
                             cursor.execute("""
-                                SELECT sku, COUNT(*) as frequency
+                                SELECT sku, COUNT(*) as frequency, 'normalized_abbrev' as match_type
                                 FROM processed_consolidado
                                 WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) = LOWER(?) AND LOWER(normalized_description) = LOWER(?)
                                 GROUP BY sku
                                 ORDER BY COUNT(*) DESC
                             """, (vin_make, vin_year, vin_series, abbreviated_desc))
-                            results = cursor.fetchall()
+                            normalized_abbrev_results = cursor.fetchall()
+
+                            # Search original_description column with abbreviated description
+                            cursor.execute("""
+                                SELECT sku, COUNT(*) as frequency, 'original_abbrev' as match_type
+                                FROM processed_consolidado
+                                WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) = LOWER(?) AND LOWER(original_description) = LOWER(?)
+                                GROUP BY sku
+                                ORDER BY COUNT(*) DESC
+                            """, (vin_make, vin_year, vin_series, abbreviated_desc))
+                            original_abbrev_results = cursor.fetchall()
 
                             # If no exact series match, try fuzzy series matching (CASE-INSENSITIVE)
-                            if not results:
+                            if not normalized_abbrev_results and not original_abbrev_results:
                                 print(f"    No exact series match for '{vin_series}', trying fuzzy series matching...")
                                 # Extract base series (remove brackets and extra info)
                                 base_series = vin_series.split('[')[0].strip() if '[' in vin_series else vin_series
 
+                                # Fuzzy search in normalized_description
                                 cursor.execute("""
-                                    SELECT sku, COUNT(*) as frequency
+                                    SELECT sku, COUNT(*) as frequency, 'normalized_abbrev_fuzzy' as match_type
                                     FROM processed_consolidado
                                     WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ?
                                     AND (LOWER(vin_series) = LOWER(?) OR LOWER(vin_series) LIKE LOWER(?) OR LOWER(vin_series) LIKE LOWER(?))
@@ -2452,9 +2544,22 @@ class FixacarApp:
                                     GROUP BY sku
                                     ORDER BY COUNT(*) DESC
                                 """, (vin_make, vin_year, base_series, f"{base_series}%", f"%{base_series}%", abbreviated_desc))
-                                results = cursor.fetchall()
-                                if results:
-                                    print(f"    ✅ Found {len(results)} unique SKUs via FUZZY SERIES match (base: '{base_series}')")
+                                normalized_abbrev_results = cursor.fetchall()
+
+                                # Fuzzy search in original_description
+                                cursor.execute("""
+                                    SELECT sku, COUNT(*) as frequency, 'original_abbrev_fuzzy' as match_type
+                                    FROM processed_consolidado
+                                    WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ?
+                                    AND (LOWER(vin_series) = LOWER(?) OR LOWER(vin_series) LIKE LOWER(?) OR LOWER(vin_series) LIKE LOWER(?))
+                                    AND LOWER(original_description) = LOWER(?)
+                                    GROUP BY sku
+                                    ORDER BY COUNT(*) DESC
+                                """, (vin_make, vin_year, base_series, f"{base_series}%", f"%{base_series}%", abbreviated_desc))
+                                original_abbrev_results = cursor.fetchall()
+
+                            # Merge abbreviated description results
+                            results = self.merge_dual_search_results(normalized_abbrev_results, original_abbrev_results)
                         else:
                             results = exact_results
 
@@ -2475,17 +2580,32 @@ class FixacarApp:
                         else:
                             print("    No exact matches found in DB (4-param)")
 
-                        # STEP 2: If no exact match, try fuzzy series matching with abbreviated description
+                        # STEP 2: If no exact match, try fuzzy series matching with abbreviated description (dual search)
                         if not suggestions:
                             print("    No exact series match, trying fuzzy series matching with abbreviated description...")
+
+                            # Search normalized_description with fuzzy series
                             cursor.execute("""
-                                SELECT sku, COUNT(*) as frequency
+                                SELECT sku, COUNT(*) as frequency, 'normalized_fuzzy' as match_type
                                 FROM processed_consolidado
                                 WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) LIKE LOWER(?) AND LOWER(normalized_description) = LOWER(?)
                                 GROUP BY sku
                                 ORDER BY COUNT(*) DESC
                             """, (vin_make, vin_year, f'%{vin_series}%', abbreviated_desc))
-                            results = cursor.fetchall()
+                            normalized_fuzzy_results = cursor.fetchall()
+
+                            # Search original_description with fuzzy series
+                            cursor.execute("""
+                                SELECT sku, COUNT(*) as frequency, 'original_fuzzy' as match_type
+                                FROM processed_consolidado
+                                WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) LIKE LOWER(?) AND LOWER(original_description) = LOWER(?)
+                                GROUP BY sku
+                                ORDER BY COUNT(*) DESC
+                            """, (vin_make, vin_year, f'%{vin_series}%', abbreviated_desc))
+                            original_fuzzy_results = cursor.fetchall()
+
+                            # Merge fuzzy series results
+                            results = self.merge_dual_search_results(normalized_fuzzy_results, original_fuzzy_results)
 
                             if results:
                                 print(f"    Found {len(results)} unique SKUs in DB (Fuzzy Series + Abbreviated)")
@@ -2504,16 +2624,30 @@ class FixacarApp:
                             else:
                                 print("    No fuzzy series + abbreviated matches found in DB")
 
-                        # STEP 2b: If still no match, try fuzzy series matching with original description
+                        # STEP 2b: If still no match, try fuzzy series matching with original description (dual search)
                         if not suggestions:
                             print("    No match with abbreviated, trying fuzzy series matching with original description...")
+
+                            # Search normalized_description
                             cursor.execute("""
-                                SELECT sku, COUNT(*) as frequency
+                                SELECT sku, COUNT(*) as frequency, 'normalized_fuzzy_orig' as match_type
                                 FROM processed_consolidado
                                 WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) LIKE LOWER(?) AND LOWER(normalized_description) = LOWER(?)
                                 GROUP BY sku
                             """, (vin_make, vin_year, f'%{vin_series}%', normalized_original))
-                            results = cursor.fetchall()
+                            normalized_orig_results = cursor.fetchall()
+
+                            # Search original_description
+                            cursor.execute("""
+                                SELECT sku, COUNT(*) as frequency, 'original_fuzzy_orig' as match_type
+                                FROM processed_consolidado
+                                WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) LIKE LOWER(?) AND LOWER(original_description) = LOWER(?)
+                                GROUP BY sku
+                            """, (vin_make, vin_year, f'%{vin_series}%', original_desc))
+                            original_orig_results = cursor.fetchall()
+
+                            # Merge results
+                            results = self.merge_dual_search_results(normalized_orig_results, original_orig_results)
                             total_matches = sum(row[1] for row in results)
                             for sku, frequency in results:
                                 if sku and sku.strip():
@@ -2524,16 +2658,30 @@ class FixacarApp:
                                     print(
                                         f"    Found in DB (Fuzzy Series + Original): {sku} (Freq: {frequency}, Conf: {confidence})")
 
-                        # STEP 2c: If still no match, try fuzzy series matching with expanded description
+                        # STEP 2c: If still no match, try fuzzy series matching with expanded description (dual search)
                         if not suggestions:
                             print("    No match with original description, trying fuzzy series matching with expanded description...")
+
+                            # Search normalized_description
                             cursor.execute("""
-                                SELECT sku, COUNT(*) as frequency
+                                SELECT sku, COUNT(*) as frequency, 'normalized_fuzzy_exp' as match_type
                                 FROM processed_consolidado
                                 WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) LIKE LOWER(?) AND LOWER(normalized_description) = LOWER(?)
                                 GROUP BY sku
                             """, (vin_make, vin_year, f'%{vin_series}%', normalized_expanded))
-                            results = cursor.fetchall()
+                            normalized_exp_results = cursor.fetchall()
+
+                            # Search original_description
+                            cursor.execute("""
+                                SELECT sku, COUNT(*) as frequency, 'original_fuzzy_exp' as match_type
+                                FROM processed_consolidado
+                                WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) LIKE LOWER(?) AND LOWER(original_description) = LOWER(?)
+                                GROUP BY sku
+                            """, (vin_make, vin_year, f'%{vin_series}%', expanded_desc))
+                            original_exp_results = cursor.fetchall()
+
+                            # Merge results
+                            results = self.merge_dual_search_results(normalized_exp_results, original_exp_results)
                             total_matches = sum(row[1] for row in results)
                             for sku, frequency in results:
                                 if sku and sku.strip():
