@@ -402,7 +402,7 @@ class FixacarApp:
             base_confidence = 0.7 + 0.002 * capped_frequency  # 0.7-0.8 range
 
         # Slight adjustment based on prediction type
-        if prediction_type == "DB (4-param Exact)":
+        if prediction_type == "DB-Exact":
             multiplier = 1.0  # Full confidence for exact matches
         elif prediction_type.startswith("DB (Unified Fuzzy"):
             multiplier = 0.9  # Slightly lower for fuzzy matches
@@ -927,8 +927,9 @@ class FixacarApp:
 
         def save_correction():
             corrected_text = correction_var.get().strip()
-            if corrected_text and corrected_text != original_desc:
-                # Save the correction
+            if corrected_text and corrected_text != display_desc:
+                # Save the correction (map from ORIGINAL text to corrected text)
+                # This ensures the correction is found during processing pipeline
                 self.save_user_correction(original_desc, corrected_text)
 
                 # Reload text processing rules to include the new correction
@@ -942,7 +943,7 @@ class FixacarApp:
                     "Correction Saved",
                     f"✅ Correction saved successfully!\n\n"
                     f"The system has learned that:\n"
-                    f"'{original_desc}' → '{corrected_text}'\n\n"
+                    f"'{display_desc}' → '{corrected_text}'\n\n"
                     f"Search results have been updated."
                 )
             dialog.destroy()
@@ -2468,7 +2469,7 @@ class FixacarApp:
                             results = exact_results
 
                         if results:
-                            print(f"    Found {len(results)} unique SKUs in DB (4-param Exact)")
+                            print(f"    Found {len(results)} unique SKUs in DB-Exact")
 
                             # Apply consensus logic to filter out minority/outlier SKUs
                             consensus_skus = self.apply_consensus_logic(results, min_consensus_ratio=0.6)
@@ -2476,13 +2477,13 @@ class FixacarApp:
                             # Process consensus SKUs with frequency-based confidence
                             for sku, frequency in consensus_skus:
                                 if sku and sku.strip():
-                                    confidence = self.calculate_frequency_based_confidence(frequency, "DB (4-param Exact)")
+                                    confidence = self.calculate_frequency_based_confidence(frequency, "DB-Exact")
                                     suggestions = self._aggregate_sku_suggestions(
-                                        suggestions, sku, confidence, f"DB (4-param Exact)")
+                                        suggestions, sku, confidence, "DB-Exact")
                                     print(
-                                        f"    ✅ Found in DB (4-param Exact): {sku} (Freq: {frequency}, Conf: {confidence})")
+                                        f"    ✅ Found in DB-Exact: {sku} (Freq: {frequency}, Conf: {confidence})")
                         else:
-                            print("    No exact matches found in DB (4-param)")
+                            print("    No exact matches found in DB")
 
                         # STEP 2: If no exact match, try fuzzy series matching with abbreviated description (dual search)
                         if not suggestions:
@@ -2603,7 +2604,7 @@ class FixacarApp:
 
                     except Exception as db_err:
                         print(
-                            f"    Error querying SQLite DB (4-param): {db_err}")
+                            f"    Error querying SQLite DB: {db_err}")
 
                 # Fallback: 3-parameter search if no results (Make, Year, Series only)
                 if not suggestions and vin_year is not None and vin_series.upper() != 'N/A':
@@ -2775,9 +2776,13 @@ class FixacarApp:
                 if corrected_desc != original_desc:
                     # User correction exists - use it for display
                     display_desc = corrected_desc.upper()
+                    print(f"🎯 Display using phrase correction: '{original_desc}' → '{display_desc}'")
                 else:
-                    # No user correction - use the normalized (expanded) version for display
-                    display_desc = normalized_original.upper() if normalized_original else original_desc
+                    # No user correction - apply the same processing as during search
+                    # This ensures display matches the processed version used for search
+                    processed_desc = self.enhanced_normalize_text(original_desc)
+                    display_desc = processed_desc.upper() if processed_desc else original_desc.upper()
+                    print(f"🎯 Display using enhanced processing: '{original_desc}' → '{processed_desc}' → '{display_desc}'")
 
                 # Get suggestions and apply source-specific limits
                 all_suggestions = [(sku, info) for sku, info in self.current_suggestions.get(original_desc, [])
