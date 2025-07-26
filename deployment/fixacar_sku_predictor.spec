@@ -9,14 +9,16 @@ import os
 import sys
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
-# Get the current directory
+# Get the current directory (deployment folder)
 current_dir = os.path.dirname(os.path.abspath(SPEC))
+# Get the parent directory (project root)
+project_root = os.path.dirname(current_dir)
 
 # Define paths
-src_path = os.path.join(current_dir, 'src')
-data_path = os.path.join(current_dir, 'data')
-models_path = os.path.join(current_dir, 'models')
-source_files_path = os.path.join(current_dir, 'Source_Files')
+src_path = os.path.join(project_root, 'src')
+data_path = os.path.join(project_root, 'data')
+models_path = os.path.join(project_root, 'models')
+source_files_path = os.path.join(project_root, 'Source_Files')
 
 # Collect all submodules for problematic packages
 torch_submodules = collect_submodules('torch')
@@ -137,8 +139,8 @@ datas.extend(scipy_data)
 
 # Analysis configuration
 a = Analysis(
-    ['src/main_app.py'],
-    pathex=[current_dir, src_path],
+    [os.path.join(project_root, 'src', 'main_app.py')],
+    pathex=[project_root, src_path],
     binaries=[],
     datas=datas,
     hiddenimports=hidden_imports,

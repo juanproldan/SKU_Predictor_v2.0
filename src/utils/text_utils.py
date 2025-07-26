@@ -68,6 +68,7 @@ NOUN_GENDERS = {
     'tuerca': 'feminine',
     'arandela': 'feminine',
     'empaquetadura': 'feminine',
+    'puntera': 'feminine',  # Bumper corner piece (la puntera)
 
     # Masculine nouns
     'faro': 'masculine',
@@ -377,7 +378,7 @@ def get_noun_gender(word: str) -> str:
         'carcasa', 'caja', 'palanca', 'varilla', 'barra', 'biela',
         'cruceta', 'horquilla', 'zapata', 'pastilla', 'lona', 'banda',
         'placa', 'chapa', 'plancha', 'rejilla', 'parrilla', 'mascara',
-        'guia', 'tuerca', 'arandela'  # Added: GUIA is feminine (la guía), plus other feminine parts
+        'guia', 'tuerca', 'arandela', 'puntera'  # Added: GUIA is feminine (la guía), PUNTERA is feminine (la puntera)
     }
 
     if word in masculine_parts:
@@ -523,7 +524,7 @@ def handle_abbreviation_patterns(words: list) -> list:
             if word in {'guia', 'farola', 'luz', 'puerta', 'aleta', 'chapa', 'rejilla', 'parrilla', 'mascara',
                        'guardafango', 'paragolpes', 'espejo', 'faro', 'absorbedor', 'radiador', 'soporte',
                        'guardapolvo', 'bomper', 'bumper', 'capo', 'tapa', 'cubierta', 'moldura',
-                       'broches', 'broche', 'remache', 'remaches', 'emblema', 'portaplaca'}:
+                       'broches', 'broche', 'remache', 'remaches', 'emblema', 'portaplaca', 'puntera'}:
                 immediate_noun = word
                 break
 
@@ -623,7 +624,8 @@ def find_immediate_noun_for_adjective(words: list, current_index: int) -> str:
                    'guardafango', 'paragolpes', 'espejo', 'faro', 'absorbedor', 'radiador', 'soporte',
                    'bomper', 'bumper', 'capo', 'tapa', 'cubierta', 'moldura', 'maneta', 'cerradura',
                    'guardapolvo', 'broches', 'broche', 'remache', 'remaches', 'tornillo', 'tornillos',
-                   'perno', 'pernos', 'tuerca', 'tuercas', 'arandela', 'arandelas', 'emblema', 'portaplaca'}:
+                   'perno', 'pernos', 'tuerca', 'tuercas', 'arandela', 'arandelas', 'emblema', 'portaplaca',
+                   'puntera'}:
             return word
 
         # Check if it's a noun based on Spanish grammar rules

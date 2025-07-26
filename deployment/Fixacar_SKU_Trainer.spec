@@ -1,7 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('Source_Files', 'Source_Files'), ('models', 'models')]
+# Get paths relative to project root
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(SPEC)))
+datas = [(os.path.join(project_root, 'Source_Files'), 'Source_Files'),
+         (os.path.join(project_root, 'models'), 'models')]
 binaries = []
 hiddenimports = ['torch', 'sklearn', 'pandas', 'numpy', 'joblib', 'openpyxl']
 tmp_ret = collect_all('torch')
@@ -14,8 +18,8 @@ block_cipher = None
 
 
 a = Analysis(
-    ['src\\train_sku_nn_predictor_pytorch_optimized.py'],
-    pathex=[],
+    [os.path.join(project_root, 'src', 'train_sku_nn_predictor_pytorch_optimized.py')],
+    pathex=[project_root],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
