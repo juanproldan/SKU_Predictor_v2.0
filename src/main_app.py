@@ -2814,18 +2814,58 @@ class FixacarApp:
                     self.results_grid_container, text="", padding=5)
                 self.part_frames_widgets.append(part_frame)
                 part_frame.columnconfigure(0, weight=1)
-                part_frame.config(width=200)
+
+                # Set consistent card width based on content
+                # Wider cards for better text display but still responsive
+                card_width = 280  # Increased from 200 to accommodate 2-line descriptions
+                part_frame.config(width=card_width, height=150)  # Set minimum height too
 
                 # Create header frame with description and pencil icon
                 header_frame = ttk.Frame(part_frame)
                 header_frame.pack(fill="x", padx=5, pady=(0, 5))
                 header_frame.columnconfigure(0, weight=1)
 
-                # Description label
+                # Description label with text wrapping
+                # Calculate max width based on average character width
+                max_chars_per_line = 25  # Adjust based on desired card width
+
+                # Wrap text if it's too long
+                if len(display_desc) > max_chars_per_line:
+                    # Simple word wrapping - split at spaces when possible
+                    words = display_desc.split()
+                    lines = []
+                    current_line = ""
+
+                    for word in words:
+                        if len(current_line + " " + word) <= max_chars_per_line:
+                            current_line = current_line + " " + word if current_line else word
+                        else:
+                            if current_line:
+                                lines.append(current_line)
+                                current_line = word
+                            else:
+                                # Word is longer than max_chars_per_line, truncate it
+                                lines.append(word[:max_chars_per_line-3] + "...")
+                                current_line = ""
+
+                    if current_line:
+                        lines.append(current_line)
+
+                    # Limit to 2 lines maximum
+                    if len(lines) > 2:
+                        lines = lines[:2]
+                        lines[1] = lines[1][:max_chars_per_line-3] + "..."
+
+                    wrapped_text = "\n".join(lines)
+                else:
+                    wrapped_text = display_desc
+
                 desc_label = ttk.Label(
                     header_frame,
-                    text=f"{display_desc}",
-                    font=("", 10, "bold")
+                    text=wrapped_text,
+                    font=("", 10, "bold"),
+                    justify="left",
+                    wraplength=0  # Disable automatic wrapping since we handle it manually
                 )
                 desc_label.grid(row=0, column=0, sticky="w")
 
@@ -3000,11 +3040,10 @@ class FixacarApp:
         if self.part_frames_widgets:
             # Update the first widget to ensure its size is calculated
             self.part_frames_widgets[0].update_idletasks()
-            # Add padding
-            actual_item_width = self.part_frames_widgets[0].winfo_reqwidth(
-            ) + 10
+            # Add padding (increased for new wider cards)
+            actual_item_width = self.part_frames_widgets[0].winfo_reqwidth() + 15
         else:
-            actual_item_width = 220  # Fallback if no widgets exist
+            actual_item_width = 295  # Updated fallback for new card width (280 + 15 padding)
 
         # Calculate the number of columns that can fit completely
         # We only want to show complete columns (no partial columns)
@@ -3016,6 +3055,17 @@ class FixacarApp:
 
             # Ensure we don't create more columns than we have items
             num_columns = min(num_columns, len(self.part_frames_widgets))
+
+            # Apply intelligent column reduction based on content complexity
+            # If we have many long descriptions, reduce columns for better readability
+            if hasattr(self, 'processed_parts') and self.processed_parts:
+                avg_desc_length = sum(len(part["original"]) for part in self.processed_parts) / len(self.processed_parts)
+
+                # If average description length is long, reduce columns
+                if avg_desc_length > 40 and num_columns > 3:
+                    num_columns = 3  # Max 3 columns for long descriptions
+                elif avg_desc_length > 60 and num_columns > 2:
+                    num_columns = 2  # Max 2 columns for very long descriptions
 
         print(
             f"Container width: {container_width}, Item width: {actual_item_width}, Complete columns: {num_columns}")
