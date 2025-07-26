@@ -12,6 +12,27 @@ import joblib  # To load trained models
 import numpy as np  # For model input reshaping
 import re  # For VIN validation
 import torch  # For PyTorch
+
+# Performance improvements imports
+try:
+    import sys
+    import os
+    # Add the parent directory to the path to find performance_improvements
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    if parent_dir not in sys.path:
+        sys.path.insert(0, parent_dir)
+
+    from performance_improvements.cache.sku_prediction_cache import initialize_cache, get_cache
+    from performance_improvements.optimizations.database_optimizer import initialize_database_optimization, get_optimizer, get_query_cache
+    from performance_improvements.optimizations.parallel_predictor import initialize_parallel_predictor, get_parallel_predictor
+    from performance_improvements.enhanced_text_processing.smart_text_processor import initialize_smart_text_processor, get_smart_processor
+    from performance_improvements.enhanced_text_processing.equivalencias_analyzer import analyze_equivalencias_from_database
+    PERFORMANCE_IMPROVEMENTS_AVAILABLE = True
+    print("🚀 Performance improvements loaded successfully")
+except ImportError as e:
+    print(f"⚠️ Performance improvements not available: {e}")
+    PERFORMANCE_IMPROVEMENTS_AVAILABLE = False
 # Import our PyTorch model implementation
 try:
     # Try relative imports first (for PyInstaller)
@@ -109,6 +130,9 @@ class FixacarApp:
 
         # Load initial data and models
         self.load_all_data_and_models()
+
+        # Initialize performance improvements
+        self.initialize_performance_optimizations()
 
         # Setup UI
         self.create_widgets()
@@ -235,6 +259,81 @@ class FixacarApp:
         # DB connection will be established when needed for search
         print("--- Application Data & Model Loading Complete ---")
 
+    def initialize_performance_optimizations(self):
+        """Initialize performance optimization components"""
+        if not PERFORMANCE_IMPROVEMENTS_AVAILABLE:
+            print("⚠️ Performance improvements not available - running in standard mode")
+            return
+
+        print("🚀 Initializing performance optimizations...")
+
+        try:
+            # Initialize caching system
+            self.sku_cache = initialize_cache(max_memory_cache=1000)
+            print("  ✅ SKU prediction cache initialized")
+
+            # Initialize database optimization
+            if os.path.exists(DEFAULT_DB_PATH):
+                self.db_optimizer, self.query_cache = initialize_database_optimization(DEFAULT_DB_PATH)
+
+                # Create optimized indexes
+                print("  🔧 Creating database indexes...")
+                self.db_optimizer.create_optimized_indexes()
+
+                # Analyze performance
+                print("  📊 Analyzing database performance...")
+                perf_results = self.db_optimizer.analyze_query_performance()
+
+                print("  ✅ Database optimization completed")
+            else:
+                print(f"  ⚠️ Database not found at {DEFAULT_DB_PATH} - skipping database optimization")
+                self.db_optimizer = None
+                self.query_cache = None
+
+            # Initialize parallel predictor
+            self.parallel_predictor = initialize_parallel_predictor(max_workers=4, enable_early_termination=True)
+            print("  ✅ Parallel predictor initialized")
+
+            # Initialize enhanced text processing
+            self.smart_processor = initialize_smart_text_processor()
+            print("  ✅ Enhanced text processing initialized")
+
+            print("🎯 Performance optimizations ready!")
+
+        except Exception as e:
+            print(f"❌ Error initializing performance optimizations: {e}")
+            # Set fallback values
+            self.sku_cache = None
+            self.db_optimizer = None
+            self.query_cache = None
+            self.parallel_predictor = None
+            self.smart_processor = None
+
+    def enhanced_normalize_text(self, text: str, **kwargs) -> str:
+        """
+        Enhanced text normalization using smart processor when available
+        Falls back to standard normalize_text if smart processor is not available
+        """
+        if PERFORMANCE_IMPROVEMENTS_AVAILABLE and self.smart_processor:
+            try:
+                # Use enhanced text processing
+                from performance_improvements.enhanced_text_processing.smart_text_processor import get_smart_processor
+                smart_processor = get_smart_processor()
+
+                # Apply enhanced processing with existing text processor as fallback
+                enhanced_text = smart_processor.process_text_enhanced(text, existing_processor=None)
+
+                # Still apply the original normalize_text for compatibility
+                final_text = normalize_text(enhanced_text, **kwargs)
+
+                return final_text
+            except Exception as e:
+                print(f"⚠️ Enhanced text processing failed, using standard: {e}")
+                return normalize_text(text, **kwargs)
+        else:
+            # Use standard text processing
+            return normalize_text(text, **kwargs)
+
     def expand_synonyms(self, text: str) -> str:
         """
         Global synonym expansion function that preprocesses text by replacing
@@ -251,7 +350,7 @@ class FixacarApp:
             return text
 
         # First normalize text (this handles abbreviations, gender, plurals automatically)
-        normalized_text = normalize_text(text, expand_linguistic_variations=True)
+        normalized_text = self.enhanced_normalize_text(text, expand_linguistic_variations=True)
         words = normalized_text.split()
         expanded_words = []
 
@@ -393,7 +492,7 @@ class FixacarApp:
 
         # Step 4: Apply comprehensive linguistic normalization
         # This handles gender agreement, plurals/singulars
-        normalized_text = normalize_text(expanded_text, expand_linguistic_variations=True)
+        normalized_text = self.enhanced_normalize_text(expanded_text, expand_linguistic_variations=True)
 
         # Step 5: Final text normalization (lowercase, spaces, punctuation)
         final_text = normalized_text.lower().strip()
@@ -786,8 +885,8 @@ class FixacarApp:
                 # Reload text processing rules to include the new correction
                 self.load_text_processing_rules(DEFAULT_TEXT_PROCESSING_PATH)
 
-                # Re-process the current search with the new correction
-                self.find_skus_handler()
+                # Re-process only the SKU search with the new correction (don't clear VIN details)
+                self._rerun_sku_search_after_correction()
 
                 # Show success message
                 messagebox.showinfo(
@@ -813,6 +912,25 @@ class FixacarApp:
         # Bind Enter key to save
         dialog.bind('<Return>', lambda e: save_correction())
         dialog.bind('<Escape>', lambda e: cancel_correction())
+
+    def _rerun_sku_search_after_correction(self):
+        """
+        Re-run SKU search after text correction without clearing VIN details.
+        This preserves the existing vehicle details and only updates SKU predictions.
+        """
+        print("\n--- Re-running SKU search after text correction ---")
+
+        # Check if we have vehicle details from previous VIN prediction
+        if not hasattr(self, 'vehicle_details') or not self.vehicle_details:
+            print("No vehicle details available. Running full search instead.")
+            self.find_skus_handler()
+            return
+
+        # Clear only the SKU results area, not the vehicle details
+        self._clear_results_area()
+
+        # Re-process parts with the corrected text and existing vehicle details
+        self._process_parts_and_continue_search()
 
     def create_abbreviated_version(self, description: str) -> str:
         """
@@ -1845,13 +1963,13 @@ class FixacarApp:
                     print(f"  ✅ User correction applied: '{original_desc}' → '{corrected_desc}'")
 
                 # STEP 2: Normalize the corrected description (without synonym expansion)
-                normalized_original = normalize_text(corrected_desc)
+                normalized_original = self.enhanced_normalize_text(corrected_desc)
                 print(f"  Normalized original: '{normalized_original}'")
 
                 # STEP 3: Apply synonym expansion for fallback searches (use corrected description)
                 expanded_desc = self.expand_synonyms(corrected_desc)
                 print(f"  After synonym expansion: '{expanded_desc}'")
-                normalized_expanded = normalize_text(expanded_desc)
+                normalized_expanded = self.enhanced_normalize_text(expanded_desc)
                 print(f"  Normalized expanded: '{normalized_expanded}'")
 
                 # STEP 4: Create abbreviated version to match database format
@@ -1863,7 +1981,7 @@ class FixacarApp:
 
                 # STEP 4: If no direct match, try fuzzy matching as fallback
                 if equivalencia_id is None:
-                    fuzzy_normalized_desc = normalize_text(expanded_desc, use_fuzzy=True)
+                    fuzzy_normalized_desc = self.enhanced_normalize_text(expanded_desc, use_fuzzy=True)
                     equivalencia_id = equivalencias_map_global.get(fuzzy_normalized_desc.lower())
 
                     if equivalencia_id is not None:
@@ -1930,6 +2048,27 @@ class FixacarApp:
 
                 # Use self.vehicle_details which is now PREDICTED
                 predicted_make_val = self.vehicle_details.get('Make', 'N/A')
+
+                # Check cache first if performance improvements are available
+                if PERFORMANCE_IMPROVEMENTS_AVAILABLE and hasattr(self, 'sku_cache') and self.sku_cache:
+                    # Extract vehicle details for caching
+                    cache_make = str(predicted_make_val.item()) if isinstance(predicted_make_val, np.ndarray) else str(predicted_make_val)
+                    cache_year = str(self.vehicle_details.get('Model Year', 'N/A'))
+                    cache_series = str(self.vehicle_details.get('Series', 'N/A'))
+
+                    # Try to get cached result
+                    cached_result = self.sku_cache.get_cached_prediction(
+                        cache_make, cache_year, cache_series, original_desc
+                    )
+
+                    if cached_result:
+                        # Use cached result
+                        suggestions = cached_result.get('suggestions', {})
+                        print(f"  🚀 Using cached predictions for: {original_desc[:30]}...")
+
+                        # Skip to display logic
+                        self.current_suggestions[original_desc] = suggestions
+                        continue
                 if isinstance(predicted_make_val, np.ndarray):
                     vin_make_raw = str(predicted_make_val.item()) if predicted_make_val.size > 0 else 'N/A'
                 else:
@@ -2242,8 +2381,8 @@ class FixacarApp:
                     try:
                         # DUAL MATCHING STRATEGY: Try exact match first, then normalized match
 
-                        # STEP 1A: Try exact description match (no normalization) - handles system-generated descriptions
-                        print(f"    Trying exact match with original description: '{original_desc}'")
+                        # STEP 1A: Try exact description match with normalized description
+                        print(f"    Trying exact match with normalized description: '{normalized_original}'")
 
                         # First try exact series match (CASE-INSENSITIVE)
                         cursor.execute("""
@@ -2252,7 +2391,7 @@ class FixacarApp:
                             WHERE LOWER(vin_make) = LOWER(?) AND vin_year = ? AND LOWER(vin_series) = LOWER(?) AND LOWER(normalized_description) = LOWER(?)
                             GROUP BY sku
                             ORDER BY COUNT(*) DESC
-                        """, (vin_make, vin_year, vin_series, original_desc))
+                        """, (vin_make, vin_year, vin_series, normalized_original))
                         exact_results = cursor.fetchall()
 
                         # If no exact series match, try fuzzy series matching (CASE-INSENSITIVE)
@@ -2269,7 +2408,7 @@ class FixacarApp:
                                 AND LOWER(normalized_description) = LOWER(?)
                                 GROUP BY sku
                                 ORDER BY COUNT(*) DESC
-                            """, (vin_make, vin_year, base_series, f"{base_series}%", f"%{base_series}%", original_desc))
+                            """, (vin_make, vin_year, base_series, f"{base_series}%", f"%{base_series}%", normalized_original))
                             exact_results = cursor.fetchall()
                             if exact_results:
                                 print(f"    ✅ Found {len(exact_results)} unique SKUs via FUZZY SERIES match (base: '{base_series}')")
@@ -2505,6 +2644,36 @@ class FixacarApp:
                 self.current_suggestions[original_desc] = sorted_suggestions
                 print(
                     f"  Suggestions for '{original_desc}': {sorted_suggestions}")
+
+                # Cache the prediction result if performance improvements are available
+                if PERFORMANCE_IMPROVEMENTS_AVAILABLE and hasattr(self, 'sku_cache') and self.sku_cache:
+                    try:
+                        # Extract vehicle details for caching
+                        cache_make = str(predicted_make_val.item()) if isinstance(predicted_make_val, np.ndarray) else str(predicted_make_val)
+                        cache_year = str(self.vehicle_details.get('Model Year', 'N/A'))
+                        cache_series = str(self.vehicle_details.get('Series', 'N/A'))
+
+                        # Convert suggestions to cacheable format
+                        cache_predictions = []
+                        cache_confidence_scores = []
+                        cache_sources = []
+
+                        for sku, info in sorted_suggestions:
+                            cache_predictions.append({
+                                'sku': sku,
+                                'confidence': info.get('confidence', 0),
+                                'source': info.get('source', 'Unknown')
+                            })
+                            cache_confidence_scores.append(info.get('confidence', 0))
+                            cache_sources.append(info.get('source', 'Unknown'))
+
+                        # Cache the result
+                        self.sku_cache.cache_prediction(
+                            cache_make, cache_year, cache_series, original_desc,
+                            cache_predictions, cache_confidence_scores, cache_sources
+                        )
+                    except Exception as cache_error:
+                        print(f"  ⚠️ Caching error: {cache_error}")
 
         except Exception as e:
             messagebox.showerror(
