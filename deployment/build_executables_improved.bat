@@ -68,7 +68,7 @@ echo.
 
 REM 1. Build SKU Predictor GUI using spec file
 echo 1. Building SKU Predictor GUI...
-pyinstaller --clean fixacar_sku_predictor.spec
+pyinstaller --clean deployment/fixacar_sku_predictor.spec
 
 if %errorlevel% equ 0 (
     echo    ✅ SKU Predictor GUI built successfully
@@ -79,20 +79,8 @@ if %errorlevel% equ 0 (
 )
 
 echo.
-echo 2. Building VIN Trainer...
-pyinstaller --clean fixacar_vin_trainer.spec
-
-if %errorlevel% equ 0 (
-    echo    ✅ VIN Trainer built successfully
-    set "vin_success=1"
-) else (
-    echo    ❌ Failed to build VIN Trainer
-    set "vin_success=0"
-)
-
-echo.
-echo 3. Building SKU Trainer...
-pyinstaller --clean fixacar_sku_trainer.spec
+echo 2. Building SKU Trainer...
+pyinstaller --clean deployment/Fixacar_SKU_Trainer.spec
 
 if %errorlevel% equ 0 (
     echo    ✅ SKU Trainer built successfully

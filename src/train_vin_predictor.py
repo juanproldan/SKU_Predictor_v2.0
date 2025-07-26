@@ -302,9 +302,9 @@ def load_and_prepare_data():
     total_vins = valid_vins + invalid_vins
     if total_vins > 0:
         improvement_pct = (valid_vins / total_vins) * 100
-        print(f"\n🔍 Detailed VIN Cleaning Results:")
-        print(f"  📊 Overall: {valid_vins:,} valid ({improvement_pct:.1f}%) | {invalid_vins:,} filtered ({100-improvement_pct:.1f}%)")
-        print(f"  📋 Filtering Breakdown:")
+        print(f"\nDetailed VIN Cleaning Results:")
+        print(f"  Overall: {valid_vins:,} valid ({improvement_pct:.1f}%) | {invalid_vins:,} filtered ({100-improvement_pct:.1f}%)")
+        print(f"  Filtering Breakdown:")
         print(f"    - Empty/Null VINs: {filtering_stats['empty_null']:,}")
         print(f"    - Wrong Length: {filtering_stats['wrong_length']:,}")
         print(f"    - Invalid Characters (I,O,Q): {filtering_stats['invalid_chars']:,}")
@@ -314,7 +314,7 @@ def load_and_prepare_data():
 
         # Calculate data quality improvement
         if invalid_vins > 0:
-            print(f"  ✅ Data Quality Improvement: +{invalid_vins:,} corrupted VINs removed from training")
+            print(f"  Data Quality Improvement: +{invalid_vins:,} corrupted VINs removed from training")
 
     if not all_data:
         print("Error: No valid data loaded for training.")

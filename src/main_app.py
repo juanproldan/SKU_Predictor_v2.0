@@ -23,7 +23,7 @@ try:
     if parent_dir not in sys.path:
         sys.path.insert(0, parent_dir)
 
-    from performance_improvements.cache.sku_prediction_cache import initialize_cache, get_cache
+    # Cache disabled: from performance_improvements.cache.sku_prediction_cache import initialize_cache, get_cache
     from performance_improvements.optimizations.database_optimizer import initialize_database_optimization, get_optimizer, get_query_cache
     from performance_improvements.optimizations.parallel_predictor import initialize_parallel_predictor, get_parallel_predictor
     from performance_improvements.enhanced_text_processing.smart_text_processor import initialize_smart_text_processor, get_smart_processor
@@ -268,9 +268,9 @@ class FixacarApp:
         print("🚀 Initializing performance optimizations...")
 
         try:
-            # Initialize caching system
-            self.sku_cache = initialize_cache(max_memory_cache=1000)
-            print("  ✅ SKU prediction cache initialized")
+            # Cache disabled for stability
+            self.sku_cache = None
+            print("  ⚠️ SKU prediction cache disabled for stability")
 
             # Initialize database optimization
             if os.path.exists(DEFAULT_DB_PATH):
@@ -2037,21 +2037,9 @@ class FixacarApp:
                         normalized_expanded = fuzzy_normalized_desc
                         print(f"  Found via fuzzy normalization: EqID {equivalencia_id}")
 
-                    # Final fallback: try fuzzy matching against all equivalencias terms
-                    if equivalencia_id is None and equivalencias_map_global:
-                        normalized_terms = list(equivalencias_map_global.keys())
-                        try:
-                            from utils.fuzzy_matcher import find_best_match
-                            match_result = find_best_match(
-                                normalized_expanded, normalized_terms, threshold=0.8)
-
-                            if match_result:
-                                best_match, similarity = match_result
-                                equivalencia_id = equivalencias_map_global.get(best_match.lower())
-                                normalized_expanded = best_match
-                                print(f"  Found via fuzzy match: '{best_match}' (similarity: {similarity:.2f}, EqID: {equivalencia_id})")
-                        except ImportError:
-                            pass
+                    # Fuzzy equivalencias matching removed - only exact matches
+                    if equivalencia_id is None:
+                        print(f"  No exact equivalencia match found for: '{normalized_expanded}'")
 
                 self.processed_parts.append({
                     "original": original_desc,
@@ -2098,26 +2086,7 @@ class FixacarApp:
                 # Use self.vehicle_details which is now PREDICTED
                 predicted_make_val = self.vehicle_details.get('Make', 'N/A')
 
-                # Check cache first if performance improvements are available
-                if PERFORMANCE_IMPROVEMENTS_AVAILABLE and hasattr(self, 'sku_cache') and self.sku_cache:
-                    # Extract vehicle details for caching
-                    cache_make = str(predicted_make_val.item()) if isinstance(predicted_make_val, np.ndarray) else str(predicted_make_val)
-                    cache_year = str(self.vehicle_details.get('Model Year', 'N/A'))
-                    cache_series = str(self.vehicle_details.get('Series', 'N/A'))
-
-                    # Try to get cached result
-                    cached_result = self.sku_cache.get_cached_prediction(
-                        cache_make, cache_year, cache_series, original_desc
-                    )
-
-                    if cached_result:
-                        # Use cached result
-                        suggestions = cached_result.get('suggestions', {})
-                        print(f"  🚀 Using cached predictions for: {original_desc[:30]}...")
-
-                        # Skip to display logic
-                        self.current_suggestions[original_desc] = suggestions
-                        continue
+                # Cache disabled - proceed with fresh predictions
                 if isinstance(predicted_make_val, np.ndarray):
                     vin_make_raw = str(predicted_make_val.item()) if predicted_make_val.size > 0 else 'N/A'
                 else:
@@ -2243,74 +2212,9 @@ class FixacarApp:
                         first_match = next(m for m in maestro_exact_matches if m['sku'] == sku)
                         print(f"      Matched via {first_match['match_type']}: '{first_match['preprocessed_desc']}'")
 
-                # Second pass: Fuzzy description matching for same Make, Year, Series
-                if not suggestions:  # Only do fuzzy if no exact matches found
-                    try:
-                        from utils.fuzzy_matcher import find_best_match
-
-                        # Get all descriptions from matching Make, Year, Series entries
-                        matching_entries = []
-                        for maestro_entry in maestro_data_global:
-                            maestro_make = str(maestro_entry.get('VIN_Make', ''))
-                            maestro_year = str(maestro_entry.get('VIN_Year', ''))  # Updated from VIN_Year_Min
-                            maestro_series = str(maestro_entry.get('VIN_Series_Trim', ''))
-
-                            # Normalize year comparison for fuzzy matching too
-                            maestro_year_normalized = str(int(float(maestro_year))) if maestro_year and str(maestro_year).replace('.', '').isdigit() else str(maestro_year)
-                            if (maestro_make.upper() == vin_make.upper() and
-                                maestro_year_normalized == vin_year_str_scalar and
-                                maestro_series.upper() == vin_series.upper()):
-                                matching_entries.append(maestro_entry)
-
-                        if matching_entries:
-                            print(f"    🔄 Applying unified preprocessing for Maestro fuzzy matching...")
-
-                            # Apply unified preprocessing to input descriptions
-                            preprocessed_original = self.unified_text_preprocessing(original_desc)
-                            preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
-
-                            # Apply unified preprocessing to candidate descriptions and create mapping
-                            candidate_descriptions = []
-                            desc_to_entry_map = {}
-
-                            for entry in matching_entries:
-                                raw_desc = str(entry.get('Normalized_Description_Input', ''))
-                                preprocessed_desc = self.unified_text_preprocessing(raw_desc)
-                                candidate_descriptions.append(preprocessed_desc)
-                                desc_to_entry_map[preprocessed_desc] = entry
-
-                            print(f"    🔍 Comparing preprocessed input: '{preprocessed_original}' vs candidates")
-
-                            # Find best fuzzy match (try original first, then expanded)
-                            match_result = find_best_match(
-                                preprocessed_original, candidate_descriptions, threshold=0.8)
-
-                            # If no good match with original, try expanded
-                            if not match_result or match_result[1] < 0.8:
-                                print(f"    🔍 Trying expanded preprocessed input: '{preprocessed_expanded}'")
-                                match_result_exp = find_best_match(
-                                    preprocessed_expanded, candidate_descriptions, threshold=0.7)
-                                if match_result_exp and (not match_result or match_result_exp[1] > match_result[1]):
-                                    match_result = match_result_exp
-
-                            if match_result:
-                                best_match_desc, similarity = match_result
-                                print(f"    ✅ Best match found: '{best_match_desc}' (Similarity: {similarity:.3f})")
-
-                                # Find the entry with this preprocessed description
-                                if best_match_desc in desc_to_entry_map:
-                                    entry = desc_to_entry_map[best_match_desc]
-                                    sku = entry.get('Confirmed_SKU')
-                                    if sku and sku.strip():
-                                        # Higher confidence for unified preprocessing matches
-                                        confidence = round(0.8 + 0.2 * similarity, 3)
-                                        suggestions = self._aggregate_sku_suggestions(
-                                            suggestions, sku, confidence, f"Maestro (Unified Fuzzy: {similarity:.2f})")
-                                        print(f"    ✅ Found in Maestro (Unified Fuzzy): {sku} (Sim: {similarity:.2f}, Conf: {confidence})")
-                            else:
-                                print(f"    ❌ No suitable fuzzy match found in Maestro after unified preprocessing")
-                    except ImportError:
-                        print("    Fuzzy matching not available for Maestro search")
+                # Fuzzy description matching removed - only exact matches for Maestro
+                if not suggestions:
+                    print("    No exact matches found in Maestro. Fuzzy description matching disabled for accuracy.")
 
                 # --- Maestro Fallback: Make + Year Only (when Series prediction fails) ---
                 if not suggestions and (vin_series == 'Unknown (VDS/WMI)' or vin_series == 'N/A'):
@@ -2793,35 +2697,7 @@ class FixacarApp:
                 print(
                     f"  Suggestions for '{original_desc}': {sorted_suggestions}")
 
-                # Cache the prediction result if performance improvements are available
-                if PERFORMANCE_IMPROVEMENTS_AVAILABLE and hasattr(self, 'sku_cache') and self.sku_cache:
-                    try:
-                        # Extract vehicle details for caching
-                        cache_make = str(predicted_make_val.item()) if isinstance(predicted_make_val, np.ndarray) else str(predicted_make_val)
-                        cache_year = str(self.vehicle_details.get('Model Year', 'N/A'))
-                        cache_series = str(self.vehicle_details.get('Series', 'N/A'))
-
-                        # Convert suggestions to cacheable format
-                        cache_predictions = []
-                        cache_confidence_scores = []
-                        cache_sources = []
-
-                        for sku, info in sorted_suggestions:
-                            cache_predictions.append({
-                                'sku': sku,
-                                'confidence': info.get('confidence', 0),
-                                'source': info.get('source', 'Unknown')
-                            })
-                            cache_confidence_scores.append(info.get('confidence', 0))
-                            cache_sources.append(info.get('source', 'Unknown'))
-
-                        # Cache the result
-                        self.sku_cache.cache_prediction(
-                            cache_make, cache_year, cache_series, original_desc,
-                            cache_predictions, cache_confidence_scores, cache_sources
-                        )
-                    except Exception as cache_error:
-                        print(f"  ⚠️ Caching error: {cache_error}")
+                # Cache disabled - no caching of results
 
         except Exception as e:
             messagebox.showerror(
