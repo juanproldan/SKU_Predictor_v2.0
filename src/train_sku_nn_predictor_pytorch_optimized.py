@@ -72,12 +72,12 @@ try:
     encoder_y_makerr = joblib.load(os.path.join(
         VIN_MODEL_DIR, 'makerr_encoder_y.joblib'))
 
-    model_fabrication_year = joblib.load(os.path.join(
-        VIN_MODEL_DIR, 'fabrication_year_model.joblib'))
-    encoder_x_fabrication_year = joblib.load(os.path.join(
-        VIN_MODEL_DIR, 'fabrication_year_encoder_x.joblib'))
-    encoder_y_fabrication_year = joblib.load(os.path.join(
-        VIN_MODEL_DIR, 'fabrication_year_encoder_y.joblib'))
+    model_model = joblib.load(os.path.join(
+        VIN_MODEL_DIR, 'model_model.joblib'))
+    encoder_x_model = joblib.load(os.path.join(
+        VIN_MODEL_DIR, 'model_encoder_x.joblib'))
+    encoder_y_model = joblib.load(os.path.join(
+        VIN_MODEL_DIR, 'model_encoder_y.joblib'))
 
     model_series = joblib.load(os.path.join(
         VIN_MODEL_DIR, 'series_model.joblib'))
@@ -94,18 +94,18 @@ except Exception as e:
 
 def predict_vin_details_batch(vins):
     """Process VIN predictions in batches for better performance."""
-    if not model_makerr or not model_fabrication_year or not model_series:
-        return [{"maker": "N/A", "fabrication_year": "N/A", "series": "N/A"} for _ in vins]
+    if not model_makerr or not model_model or not model_series:
+        return [{"maker": "N/A", "model": "N/A", "series": "N/A"} for _ in vins]
 
     results = []
     for vin in vins:
         features = extract_vin_features_production(vin)
         if not features:
             results.append(
-                {"maker": "N/A", "fabrication_year": "N/A", "series": "N/A"})
+                {"maker": "N/A", "model": "N/A", "series": "N/A"})
             continue
 
-        details = {"maker": "N/A", "fabrication_year": "N/A", "series": "N/A"}
+        details = {"maker": "N/A", "model": "N/A", "series": "N/A"}
         try:
             # Predict Make - Use DataFrame with proper column names
             import pandas as pd
@@ -119,11 +119,11 @@ def predict_vin_details_batch(vins):
 
             # Predict Model Year - Use DataFrame with proper column names
             year_df = pd.DataFrame([[features['year_code']]], columns=['year_code'])
-            year_code_encoded = encoder_x_fabrication_year.transform(year_df)
+            year_code_encoded = encoder_x_model.transform(year_df)
             if -1 not in year_code_encoded:
-                pred_encoded = model_fabrication_year.predict(year_code_encoded)
+                pred_encoded = model_model.predict(year_code_encoded)
                 if pred_encoded[0] != -1:
-                    details['fabrication_year'] = encoder_y_fabrication_year.inverse_transform(
+                    details['model'] = encoder_y_model.inverse_transform(
                         pred_encoded.reshape(-1, 1))[0]
 
             # Predict Series - Use DataFrame with proper column names
@@ -286,9 +286,9 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
                    df_vin_details.reset_index(drop=True)], axis=1)
 
     # Clean data
-    df.dropna(subset=['maker', 'fabrication_year', 'series',
+    df.dropna(subset=['maker', 'model', 'series',
               'normalized_descripcion', 'referencia'], inplace=True)
-    df = df[(df['maker'] != 'N/A') & (df['fabrication_year']
+    df = df[(df['maker'] != 'N/A') & (df['model']
                                      != 'N/A') & (df['series'] != 'N/A')]
     print(f"Records after VIN prediction and NA drop: {len(df)}")
 
@@ -308,7 +308,7 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
         return None
 
     # Encode categorical features
-    categorical_features = ['maker', 'fabrication_year', 'series']
+    categorical_features = ['maker', 'model', 'series']
     encoders = {}
     for col in categorical_features:
         le = LabelEncoder()

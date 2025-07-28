@@ -48,7 +48,7 @@ def test_database_performance():
         ("Count All Records", "SELECT COUNT(*) FROM processed_consolidado"),
         ("Sample Records", "SELECT * FROM processed_consolidado LIMIT 5"),
         ("Make Filter", "SELECT COUNT(*) FROM processed_consolidado WHERE maker = 'TOYOTA'"),
-        ("Year Filter", "SELECT COUNT(*) FROM processed_consolidado WHERE fabrication_year = '2020'"),
+        ("Year Filter", "SELECT COUNT(*) FROM processed_consolidado WHERE model = '2020'"),
         ("SKU Count", "SELECT COUNT(DISTINCT sku) FROM processed_consolidado WHERE sku IS NOT NULL"),
         ("Description Search", "SELECT COUNT(*) FROM processed_consolidado WHERE normalized_descripcion LIKE '%parachoques%'")
     ]

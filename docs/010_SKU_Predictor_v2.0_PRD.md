@@ -18,10 +18,10 @@
 
 * **1.2 Implementation Status - COMPLETED FEATURES:**
     * ✅ **Multi-Source SKU Prediction System** with 4 prediction sources
-    * ✅ **VIN Prediction Models** for maker, fabrication_year, and series extraction
+    * ✅ **VIN Prediction Models** for maker, model, and series extraction
     * ✅ **PyTorch Neural Network** for SKU prediction with optimized architecture
     * ✅ **Synonym Expansion System** (Equivalencias) for consistent input preprocessing
-    * ✅ **Expert-Validated Learning System** (Maestro) with 4-parameter matching (maker, fabrication_year, series, descripcion)
+    * ✅ **Expert-Validated Learning System** (Maestro) with 4-parameter matching (maker, model, series, descripcion)
     * ✅ **Historical Database Integration** with frequency-based confidence scoring
     * ✅ **Fuzzy Matching Fallback** for handling unrecognized descriptions
     * ✅ **Comprehensive GUI** with responsive layout and confidence visualization
@@ -36,7 +36,7 @@
     * ✅ Enable non-technical users to quickly find collision part SKUs through **4 different prediction methods**
     * ✅ Handle variability in human-entered part descriptions via **global synonym expansion**
     * ✅ Predict SKUs for new vehicles using **trained VIN prediction models** and **neural networks**
-    * ✅ Implement learning loop via `Maestro.xlsx` with **4-parameter matching** (maker, fabrication_year, series, descripcion)
+    * ✅ Implement learning loop via `Maestro.xlsx` with **4-parameter matching** (maker, model, series, descripcion)
     * ✅ Provide intuitive user interface with **confidence scoring** and **source attribution**
     * ✅ Process large historical datasets efficiently for **offline model training**
 
@@ -66,8 +66,8 @@
 * ✅ **As a Fixacar employee preparing a bid, I want to open the application and enter the VIN and a list of required part descriptions.**
   - *Implementation: GUI with VIN input field and multi-line part descriptions text area*
 
-* ✅ **As a Fixacar employee, I want the application to show me the vehicle's key details (maker, model, fabrication_year, series) based on the VIN.**
-  - *Implementation: VIN prediction models extract maker, fabrication_year, and series from 17-character VIN*
+* ✅ **As a Fixacar employee, I want the application to show me the vehicle's key details (maker, model, series) based on the VIN.**
+  - *Implementation: VIN prediction models extract maker, model, and series from 17-character VIN*
 
 * ✅ **As a Fixacar employee, for each part description I entered, I want the application to predict and provide a ranked list of probable SKUs for that vehicle and part, even if the description varies or it's a new vehicle VIN.**
   - *Implementation: 4-source prediction system with confidence scoring and ranking*
@@ -79,7 +79,7 @@
   - *Implementation: Radio button selection interface with manual entry option*
 
 * ✅ **As a Fixacar employee, I want my correct selections to be saved automatically to improve future predictions and suggestions for similar parts and vehicles by updating the Maestro file.**
-  - *Implementation: Learning mechanism saves confirmed selections to Maestro.xlsx with 4-parameter matching (maker, fabrication_year, series, descripcion)*
+  - *Implementation: Learning mechanism saves confirmed selections to Maestro.xlsx with 4-parameter matching (maker, model, series, descripcion)*
 
 * ✅ **As a Fixacar employee, I want the system to learn when a suggested SKU was incorrect based on my feedback (declining or selecting a different one).**
   - *Implementation: User selections update the expert-validated Maestro database for future high-confidence matches*

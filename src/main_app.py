@@ -163,11 +163,11 @@ class FixacarApp:
             print("  Maker model loaded.")
 
             model_year = joblib.load(os.path.join(
-                MODEL_DIR, 'fabrication_year_model.joblib'))
+                MODEL_DIR, 'model_model.joblib'))
             encoder_x_year = joblib.load(os.path.join(
-                MODEL_DIR, 'fabrication_year_encoder_x.joblib'))
+                MODEL_DIR, 'model_encoder_x.joblib'))
             encoder_y_year = joblib.load(os.path.join(
-                MODEL_DIR, 'fabrication_year_encoder_y.joblib'))
+                MODEL_DIR, 'model_encoder_y.joblib'))
             print("  Year model loaded.")
 
             model_series = joblib.load(os.path.join(
@@ -1356,7 +1356,7 @@ class FixacarApp:
         print(f"Loading maestro data from: {file_path}")
         # Updated column list - using original consolidado field names
         maestro_columns = [
-            'Maestro_ID', 'maker', 'fabrication_year',
+            'Maestro_ID', 'maker', 'model',
             'series', 'original_descripcion',
             'normalized_descripcion', 'referencia',
             'Source', 'Date_Added'
@@ -1404,7 +1404,7 @@ class FixacarApp:
                     entry['normalized_descripcion'] = ""
 
                 # Fix bracketed values in integer columns
-                for col in ['Maestro_ID', 'fabrication_year']:
+                for col in ['Maestro_ID', 'model']:
                     if col in entry and pd.notna(entry[col]):
                         original_value = entry[col]  # Store original value
                         try:
@@ -1650,7 +1650,7 @@ class FixacarApp:
         # Fallback for any other sources
         return source[:15] + "..." if len(source) > 15 else source
 
-    def _get_sku_nn_prediction(self, maker: str, fabrication_year: str, series: str, descripcion: str) -> str | None:
+    def _get_sku_nn_prediction(self, maker: str, model: str, series: str, descripcion: str) -> str | None:
         """
         Uses the loaded SKU NN model to predict an SKU.
         Returns the predicted SKU string or None if prediction fails or model not available.
@@ -1668,7 +1668,7 @@ class FixacarApp:
             # Create a dictionary of encoders to pass to predict_sku
             encoders = {
                 'maker': sku_nn_encoder_make,
-                'fabrication_year': sku_nn_encoder_model_year,
+                'model': sku_nn_encoder_model_year,
                 'Series': sku_nn_encoder_series,
                 'tokenizer': sku_nn_tokenizer_desc,
                 'referencia': sku_nn_encoder_referencia
@@ -1695,7 +1695,7 @@ class FixacarApp:
                 return None
 
         except ValueError as ve:
-            # This can happen if a category (maker, fabrication_year, series) was not seen during training
+            # This can happen if a category (maker, model, series) was not seen during training
             print(
                 f"  SKU NN Prediction Error: Could not encode inputs for '{description}'. Untrained category? Details: {ve}")
             return None
@@ -1758,7 +1758,7 @@ class FixacarApp:
         self._process_parts_and_continue_search()
 
     def predict_vin_details(self, vin: str) -> dict | None:
-        """Predicts maker, fabrication_year, series using loaded models."""
+        """Predicts maker, model, series using loaded models."""
         if not model_maker or not model_year or not model_series:
             print("Error: Prediction models not loaded.")
             messagebox.showerror(
@@ -1771,7 +1771,7 @@ class FixacarApp:
                                  "Could not extract features from VIN.")
             return None
 
-        details = {"maker": "N/A", "fabrication_year": "N/A",
+        details = {"maker": "N/A", "model": "N/A",
                    "Series": "N/A", "Model": "N/A", "Body Class": "N/A"}
 
         try:
@@ -1800,7 +1800,7 @@ class FixacarApp:
             year_df = pd.DataFrame([[features['year_code']]], columns=['year_code'])
             year_code_encoded = encoder_x_year.transform(year_df)
             if -1 in year_code_encoded:
-                details['fabrication_year'] = "Unknown (Code)"
+                details['model'] = "Unknown (Code)"
             else:
                 year_pred_encoded = model_year.predict(year_code_encoded)
                 if year_pred_encoded[0] != -1:
@@ -1808,12 +1808,12 @@ class FixacarApp:
                         year_pred_encoded.reshape(-1, 1))[0]
                     # Ensure it's a scalar value, not an array
                     if hasattr(year_result, 'item'):
-                        details['fabrication_year'] = year_result.item()
+                        details['model'] = year_result.item()
                     else:
-                        details['fabrication_year'] = year_result
+                        details['model'] = year_result
                 else:
                     # Fallback to direct map if model fails (unlikely for year)
-                    details['fabrication_year'] = str(decode_year(features['year_code'])) if decode_year(
+                    details['model'] = str(decode_year(features['year_code'])) if decode_year(
                         features['year_code']) else "Unknown (Code)"
 
             # Predict Series - Use DataFrame with proper column names
@@ -2112,21 +2112,21 @@ class FixacarApp:
 
                 # Model is likely N/A from predictor
                 vin_model = self.vehicle_details.get('Model', 'N/A')
-                fabrication_year_str = self.vehicle_details.get('fabrication_year', 'N/A')
-                fabrication_year = None  # Initialize
+                model_str = self.vehicle_details.get('model', 'N/A')
+                model = None  # Initialize
                 # Check if it's still an array element
-                if isinstance(fabrication_year_str, np.ndarray):
-                    fabrication_year_str_scalar = fabrication_year_str.item()  # Extract scalar value
+                if isinstance(model_str, np.ndarray):
+                    model_str_scalar = model_str.item()  # Extract scalar value
                 else:
-                    fabrication_year_str_scalar = fabrication_year_str  # Use as is if already scalar/string
+                    model_str_scalar = model_str  # Use as is if already scalar/string
 
-                if fabrication_year_str_scalar and fabrication_year_str_scalar != 'N/A':
+                if model_str_scalar and model_str_scalar != 'N/A':
                     try:
-                        fabrication_year = int(fabrication_year_str_scalar)
+                        model = int(model_str_scalar)
                     except (ValueError, TypeError):
                         print(
-                            f"Warning: Could not convert predicted year '{fabrication_year_str_scalar}' to integer.")
-                        fabrication_year = None  # Ensure it's None if conversion fails
+                            f"Warning: Could not convert predicted year '{model_str_scalar}' to integer.")
+                        model = None  # Ensure it's None if conversion fails
 
                 # Enhanced Maestro Search with 3-parameter exact + fuzzy description matching
                 print(f"  Searching Maestro data ({len(maestro_data_global)} entries)...")
@@ -2139,32 +2139,32 @@ class FixacarApp:
                     series = str(predicted_series_val) if pd.notna(predicted_series_val) else 'N/A'
 
                 # Debug: Show what we're searching for
-                print(f"    🔍 Searching for: maker='{maker}', fabrication_year='{fabrication_year_str_scalar}', series='{series}'")
+                print(f"    🔍 Searching for: maker='{maker}', model='{model_str_scalar}', series='{series}'")
                 print(f"    🔍 Description (original): '{normalized_original}'")
                 print(f"    🔍 Description (expanded): '{normalized_expanded}'")
 
-                # First pass: Exact matches on maker, fabrication_year, series + exact description
+                # First pass: Exact matches on maker, model, series + exact description
                 # COLLECT ALL MATCHING SKUs (not just first one)
                 maestro_exact_matches = []
                 maestro_matches_found = 0
 
                 for maestro_entry in maestro_data_global:
                     maestro_make = str(maestro_entry.get('maker', ''))
-                    maestro_year = str(maestro_entry.get('fabrication_year', ''))
+                    maestro_year = str(maestro_entry.get('model', ''))
                     maestro_series = str(maestro_entry.get('series', ''))
                     maestro_desc = str(maestro_entry.get('normalized_descripcion', '')).lower()
 
-                    # Check 3-parameter exact match (maker, fabrication_year, series) - CASE INSENSITIVE
+                    # Check 3-parameter exact match (maker, model, series) - CASE INSENSITIVE
                     make_match = maestro_make.upper() == maker.upper()
                     # Normalize year comparison - handle both float and string formats
                     maestro_year_normalized = str(int(float(maestro_year))) if maestro_year and str(maestro_year).replace('.', '').isdigit() else str(maestro_year)
-                    year_match = maestro_year_normalized == fabrication_year_str_scalar
+                    year_match = maestro_year_normalized == model_str_scalar
                     series_match = maestro_series.upper() == series.upper()
 
                     # Debug: Show first few comparisons
                     if maestro_matches_found < 5:
                         print(f"    📋 Entry {maestro_matches_found}: maker='{maestro_make.upper()}' vs '{maker.upper()}' ({make_match})")
-                        print(f"    📋 Entry {maestro_matches_found}: fabrication_year='{maestro_year}' vs '{fabrication_year_str_scalar}' ({year_match})")
+                        print(f"    📋 Entry {maestro_matches_found}: model='{maestro_year}' vs '{model_str_scalar}' ({year_match})")
                         print(f"    📋 Entry {maestro_matches_found}: series='{maestro_series.upper()}' vs '{series.upper()}' ({series_match})")
                         print(f"    📋 Entry {maestro_matches_found}: Desc='{maestro_desc}' vs '{normalized_original}' / '{normalized_expanded}'")
                         maestro_matches_found += 1
@@ -2224,7 +2224,7 @@ class FixacarApp:
                     fallback_matches = []
                     for maestro_entry in maestro_data_global:
                         maestro_make = str(maestro_entry.get('maker', ''))
-                        maestro_year = str(maestro_entry.get('fabrication_year', ''))
+                        maestro_year = str(maestro_entry.get('model', ''))
                         maestro_desc = str(maestro_entry.get('normalized_descripcion', '')).lower()
 
                         # Normalize year comparison
@@ -2232,7 +2232,7 @@ class FixacarApp:
 
                         # Check Make + Year match only
                         make_match = maestro_make.upper() == maker.upper()
-                        year_match = maestro_year_normalized == fabrication_year_str_scalar
+                        year_match = maestro_year_normalized == model_str_scalar
 
                         if make_match and year_match:
                             # Apply unified preprocessing for description matching
@@ -2286,21 +2286,21 @@ class FixacarApp:
                 else:
                     series_str_for_nn = "N/A"
 
-                if maker != 'N/A' and fabrication_year_str_scalar != 'N/A' and series_str_for_nn != 'N/A':
+                if maker != 'N/A' and model_str_scalar != 'N/A' and series_str_for_nn != 'N/A':
                     print(f"  🔄 Applying unified preprocessing for Neural Network input...")
 
                     # Apply unified preprocessing to input descriptions for Neural Network
                     preprocessed_original = self.unified_text_preprocessing(original_desc)
                     preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
 
-                    print(f"  Attempting SKU NN prediction for: maker='{maker}', fabrication_year='{fabrication_year_str_scalar}', series='{series_str_for_nn}'")
+                    print(f"  Attempting SKU NN prediction for: maker='{maker}', model='{model_str_scalar}', series='{series_str_for_nn}'")
                     print(f"  NN Input (preprocessed original): '{preprocessed_original}'")
                     print(f"  NN Input (preprocessed expanded): '{preprocessed_expanded}'")
 
                     # Try preprocessed original description first
                     sku_nn_output = self._get_sku_nn_prediction(
                         make=maker,
-                        model_year=fabrication_year_str_scalar,
+                        model_year=model_str_scalar,
                         series=series_str_for_nn,
                         description=preprocessed_original
                     )
@@ -2310,7 +2310,7 @@ class FixacarApp:
                         print(f"  Trying NN prediction with preprocessed expanded description...")
                         sku_nn_output_expanded = self._get_sku_nn_prediction(
                             make=maker,
-                            model_year=fabrication_year_str_scalar,
+                            model_year=model_str_scalar,
                             series=series_str_for_nn,
                             description=preprocessed_expanded
                         )
@@ -2328,10 +2328,10 @@ class FixacarApp:
                     print("  Skipping SKU NN prediction due to missing Make, Year, or Series from VIN prediction.")
                 # --- End Neural Network Prediction ---
 
-                # SQLite Search (4-parameter matching: maker, fabrication_year, series, Description) - Priority 3
-                if fabrication_year is not None and series.upper() != 'N/A':
+                # SQLite Search (4-parameter matching: maker, model, series, Description) - Priority 3
+                if model is not None and series.upper() != 'N/A':
                     print(
-                        f"  Searching SQLite DB (Make: {maker}, Year: {fabrication_year}, Series: {series})...")
+                        f"  Searching SQLite DB (Make: {maker}, Year: {model}, Series: {series})...")
                     try:
                         # DUAL MATCHING STRATEGY: Search both normalized_descripcion AND original_descripcion
 
@@ -2342,10 +2342,10 @@ class FixacarApp:
                         cursor.execute("""
                             SELECT referencia, COUNT(*) as frequency, 'normalized' as match_type
                             FROM processed_consolidado
-                            WHERE LOWER(maker) = LOWER(?) AND fabrication_year = ? AND LOWER(series) = LOWER(?) AND LOWER(normalized_descripcion) = LOWER(?)
+                            WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(normalized_descripcion) = LOWER(?)
                             GROUP BY referencia
                             ORDER BY COUNT(*) DESC
-                        """, (maker, fabrication_year, series, normalized_original))
+                        """, (maker, model, series, normalized_original))
                         normalized_results = cursor.fetchall()
 
                         # If no exact series match, try fuzzy series matching (CASE-INSENSITIVE)
@@ -2357,12 +2357,12 @@ class FixacarApp:
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'normalized_fuzzy' as match_type
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND fabrication_year = ?
+                                WHERE LOWER(maker) = LOWER(?) AND model = ?
                                 AND (LOWER(series) = LOWER(?) OR LOWER(series) LIKE LOWER(?) OR LOWER(series) LIKE LOWER(?))
                                 AND LOWER(normalized_descripcion) = LOWER(?)
                                 GROUP BY referencia
                                 ORDER BY COUNT(*) DESC
-                            """, (maker, fabrication_year, base_series, f"{base_series}%", f"%{base_series}%", normalized_original))
+                            """, (maker, model, base_series, f"{base_series}%", f"%{base_series}%", normalized_original))
                             normalized_results = cursor.fetchall()
                             if normalized_results:
                                 print(f"    ✅ Found {len(normalized_results)} unique SKUs via FUZZY SERIES match (base: '{base_series}')")
@@ -2374,10 +2374,10 @@ class FixacarApp:
                         cursor.execute("""
                             SELECT referencia, COUNT(*) as frequency, 'original' as match_type
                             FROM processed_consolidado
-                            WHERE LOWER(maker) = LOWER(?) AND fabrication_year = ? AND LOWER(series) = LOWER(?) AND LOWER(original_descripcion) = LOWER(?)
+                            WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(original_descripcion) = LOWER(?)
                             GROUP BY referencia
                             ORDER BY COUNT(*) DESC
-                        """, (maker, fabrication_year, series, original_desc))
+                        """, (maker, model, series, original_desc))
                         original_results = cursor.fetchall()
 
                         # If no exact series match, try fuzzy series matching (CASE-INSENSITIVE)
@@ -2388,12 +2388,12 @@ class FixacarApp:
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'original_fuzzy' as match_type
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND fabrication_year = ?
+                                WHERE LOWER(maker) = LOWER(?) AND model = ?
                                 AND (LOWER(series) = LOWER(?) OR LOWER(series) LIKE LOWER(?) OR LOWER(series) LIKE LOWER(?))
                                 AND LOWER(original_descripcion) = LOWER(?)
                                 GROUP BY referencia
                                 ORDER BY COUNT(*) DESC
-                            """, (maker, fabrication_year, base_series, f"{base_series}%", f"%{base_series}%", original_desc))
+                            """, (maker, model, base_series, f"{base_series}%", f"%{base_series}%", original_desc))
                             original_results = cursor.fetchall()
 
                         # STEP 1C: Merge and deduplicate results from both searches
@@ -2417,20 +2417,20 @@ class FixacarApp:
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'normalized_abbrev' as match_type
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND fabrication_year = ? AND LOWER(series) = LOWER(?) AND LOWER(normalized_descripcion) = LOWER(?)
+                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(normalized_descripcion) = LOWER(?)
                                 GROUP BY referencia
                                 ORDER BY COUNT(*) DESC
-                            """, (maker, fabrication_year, series, abbreviated_desc))
+                            """, (maker, model, series, abbreviated_desc))
                             normalized_abbrev_results = cursor.fetchall()
 
                             # Search original_descripcion column with abbreviated description
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'original_abbrev' as match_type
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND fabrication_year = ? AND LOWER(series) = LOWER(?) AND LOWER(original_descripcion) = LOWER(?)
+                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(original_descripcion) = LOWER(?)
                                 GROUP BY referencia
                                 ORDER BY COUNT(*) DESC
-                            """, (maker, fabrication_year, series, abbreviated_desc))
+                            """, (maker, model, series, abbreviated_desc))
                             original_abbrev_results = cursor.fetchall()
 
                             # If no exact series match, try fuzzy series matching (CASE-INSENSITIVE)
@@ -2443,24 +2443,24 @@ class FixacarApp:
                                 cursor.execute("""
                                     SELECT referencia, COUNT(*) as frequency, 'normalized_abbrev_fuzzy' as match_type
                                     FROM processed_consolidado
-                                    WHERE LOWER(maker) = LOWER(?) AND fabrication_year = ?
+                                    WHERE LOWER(maker) = LOWER(?) AND model = ?
                                     AND (LOWER(series) = LOWER(?) OR LOWER(series) LIKE LOWER(?) OR LOWER(series) LIKE LOWER(?))
                                     AND LOWER(normalized_descripcion) = LOWER(?)
                                     GROUP BY referencia
                                     ORDER BY COUNT(*) DESC
-                                """, (maker, fabrication_year, base_series, f"{base_series}%", f"%{base_series}%", abbreviated_desc))
+                                """, (maker, model, base_series, f"{base_series}%", f"%{base_series}%", abbreviated_desc))
                                 normalized_abbrev_results = cursor.fetchall()
 
                                 # Fuzzy search in original_descripcion
                                 cursor.execute("""
                                     SELECT referencia, COUNT(*) as frequency, 'original_abbrev_fuzzy' as match_type
                                     FROM processed_consolidado
-                                    WHERE LOWER(maker) = LOWER(?) AND fabrication_year = ?
+                                    WHERE LOWER(maker) = LOWER(?) AND model = ?
                                     AND (LOWER(series) = LOWER(?) OR LOWER(series) LIKE LOWER(?) OR LOWER(series) LIKE LOWER(?))
                                     AND LOWER(original_descripcion) = LOWER(?)
                                     GROUP BY referencia
                                     ORDER BY COUNT(*) DESC
-                                """, (maker, fabrication_year, base_series, f"{base_series}%", f"%{base_series}%", abbreviated_desc))
+                                """, (maker, model, base_series, f"{base_series}%", f"%{base_series}%", abbreviated_desc))
                                 original_abbrev_results = cursor.fetchall()
 
                             # Merge abbreviated description results
@@ -2493,20 +2493,20 @@ class FixacarApp:
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'normalized_fuzzy' as match_type
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND fabrication_year = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(normalized_descripcion) = LOWER(?)
+                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(normalized_descripcion) = LOWER(?)
                                 GROUP BY referencia
                                 ORDER BY COUNT(*) DESC
-                            """, (maker, fabrication_year, f'%{series}%', abbreviated_desc))
+                            """, (maker, model, f'%{series}%', abbreviated_desc))
                             normalized_fuzzy_results = cursor.fetchall()
 
                             # Search original_descripcion with fuzzy series
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'original_fuzzy' as match_type
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND fabrication_year = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(original_descripcion) = LOWER(?)
+                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(original_descripcion) = LOWER(?)
                                 GROUP BY referencia
                                 ORDER BY COUNT(*) DESC
-                            """, (maker, fabrication_year, f'%{series}%', abbreviated_desc))
+                            """, (maker, model, f'%{series}%', abbreviated_desc))
                             original_fuzzy_results = cursor.fetchall()
 
                             # Merge fuzzy series results
@@ -2537,18 +2537,18 @@ class FixacarApp:
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'normalized_fuzzy_orig' as match_type
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND fabrication_year = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(normalized_descripcion) = LOWER(?)
+                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(normalized_descripcion) = LOWER(?)
                                 GROUP BY referencia
-                            """, (maker, fabrication_year, f'%{series}%', normalized_original))
+                            """, (maker, model, f'%{series}%', normalized_original))
                             normalized_orig_results = cursor.fetchall()
 
                             # Search original_descripcion
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'original_fuzzy_orig' as match_type
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND fabrication_year = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(original_descripcion) = LOWER(?)
+                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(original_descripcion) = LOWER(?)
                                 GROUP BY referencia
-                            """, (maker, fabrication_year, f'%{series}%', original_desc))
+                            """, (maker, model, f'%{series}%', original_desc))
                             original_orig_results = cursor.fetchall()
 
                             # Merge results
@@ -2571,18 +2571,18 @@ class FixacarApp:
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'normalized_fuzzy_exp' as match_type
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND fabrication_year = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(normalized_descripcion) = LOWER(?)
+                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(normalized_descripcion) = LOWER(?)
                                 GROUP BY referencia
-                            """, (maker, fabrication_year, f'%{series}%', normalized_expanded))
+                            """, (maker, model, f'%{series}%', normalized_expanded))
                             normalized_exp_results = cursor.fetchall()
 
                             # Search original_descripcion
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'original_fuzzy_exp' as match_type
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND fabrication_year = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(original_descripcion) = LOWER(?)
+                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(original_descripcion) = LOWER(?)
                                 GROUP BY referencia
-                            """, (maker, fabrication_year, f'%{series}%', expanded_desc))
+                            """, (maker, model, f'%{series}%', expanded_desc))
                             original_exp_results = cursor.fetchall()
 
                             # Merge results
@@ -2606,19 +2606,19 @@ class FixacarApp:
                         print(
                             f"    Error querying SQLite DB: {db_err}")
 
-                # Fallback: 3-parameter search if no results (maker, fabrication_year, series only)
-                if not suggestions and fabrication_year is not None and series.upper() != 'N/A':
+                # Fallback: 3-parameter search if no results (maker, model, series only)
+                if not suggestions and model is not None and series.upper() != 'N/A':
                     print(
-                        f"  Fallback SQLite search (3-param: maker, fabrication_year, series)...")
+                        f"  Fallback SQLite search (3-param: maker, model, series)...")
                     try:
                         # STEP 1: Try exact series match with fuzzy description
                         cursor.execute("""
                             SELECT referencia, normalized_descripcion, COUNT(*) as frequency
                             FROM processed_consolidado
-                            WHERE LOWER(maker) = LOWER(?) AND fabrication_year = ? AND LOWER(series) = LOWER(?)
+                            WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?)
                             GROUP BY referencia, normalized_descripcion
                             ORDER BY frequency DESC
-                        """, (maker, fabrication_year, series))
+                        """, (maker, model, series))
                         results = cursor.fetchall()
 
                         print(f"    🔄 3-param fallback: Only exact description matches allowed...")
@@ -2646,14 +2646,14 @@ class FixacarApp:
                         # STEP 2: If still no results, try fuzzy series + EXACT description only
                         if not suggestions:
                             print(
-                                f"  Final Fallback SQLite search (Fuzzy Series: maker, fabrication_year, series LIKE '%{series}%')...")
+                                f"  Final Fallback SQLite search (Fuzzy Series: maker, model, series LIKE '%{series}%')...")
                             cursor.execute("""
                                 SELECT referencia, normalized_descripcion, COUNT(*) as frequency
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND fabrication_year = ? AND LOWER(series) LIKE LOWER(?)
+                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?)
                                 GROUP BY referencia, normalized_descripcion
                                 ORDER BY frequency DESC
-                            """, (maker, fabrication_year, f'%{series}%'))
+                            """, (maker, model, f'%{series}%'))
                             fuzzy_results = cursor.fetchall()
 
                             print(f"    🔄 Applying unified preprocessing for fuzzy series + exact description matching...")
@@ -2732,7 +2732,7 @@ class FixacarApp:
             ttk.Label(
                 self.vehicle_details_frame, text=f"Predicted Make: {self.vehicle_details.get('maker', 'N/A')}").pack(anchor="w", padx=5, pady=2)
             ttk.Label(
-                self.vehicle_details_frame, text=f"Predicted Year: {self.vehicle_details.get('fabrication_year', 'N/A')}").pack(anchor="w", padx=5, pady=2)
+                self.vehicle_details_frame, text=f"Predicted Year: {self.vehicle_details.get('model', 'N/A')}").pack(anchor="w", padx=5, pady=2)
             ttk.Label(
                 self.vehicle_details_frame, text=f"Predicted Series: {self.vehicle_details.get('Series', 'N/A')}").pack(anchor="w", padx=5, pady=2)
         else:
@@ -3224,7 +3224,7 @@ class FixacarApp:
             for existing_entry in maestro_data_global:
                 # Check for duplicates based on 4-parameter approach
                 if (existing_entry.get('maker') == selection['vin_details'].get('maker') and
-                    existing_entry.get('fabrication_year') == selection['vin_details'].get('fabrication_year') and
+                    existing_entry.get('model') == selection['vin_details'].get('model') and
                     existing_entry.get('series') == selection['vin_details'].get('series') and
                     existing_entry.get('normalized_descripcion') == selection['normalized_descripcion'] and
                         existing_entry.get('referencia') == selection['confirmed_sku']):
@@ -3232,7 +3232,7 @@ class FixacarApp:
                     break
             if not is_duplicate:
                 # Extract and convert year to integer
-                model_year = selection['vin_details'].get('fabrication_year')
+                model_year = selection['vin_details'].get('model')
                 if isinstance(model_year, (list, tuple, np.ndarray)):
                     model_year = model_year[0] if len(model_year) > 0 else None
                 if isinstance(model_year, str):
@@ -3244,7 +3244,7 @@ class FixacarApp:
                 new_entry = {
                     'Maestro_ID': next_id,
                     'maker': selection['vin_details'].get('maker'),
-                    'fabrication_year': model_year,
+                    'model': model_year,
                     'series': selection['vin_details'].get('series'),
                     'original_descripcion': selection['original_descripcion'],
                     'normalized_descripcion': selection['normalized_descripcion'],
@@ -3266,7 +3266,7 @@ class FixacarApp:
             try:
                 # Using original consolidado field names
                 maestro_columns = [
-                    'Maestro_ID', 'maker', 'fabrication_year',
+                    'Maestro_ID', 'maker', 'model',
                     'series', 'original_descripcion',
                     'normalized_descripcion', 'referencia',
                     'Source', 'Date_Added'

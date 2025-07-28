@@ -30,10 +30,10 @@ def update_field_names_in_file(file_path):
             # Dictionary key replacements (most specific first)
             (r"'Make'", "'maker'"),
             (r'"Make"', '"maker"'),
-            (r"'Model Year'", "'fabrication_year'"),
-            (r'"Model Year"', '"fabrication_year"'),
-            (r"'Year'", "'fabrication_year'"),
-            (r'"Year"', '"fabrication_year"'),
+            (r"'Model Year'", "'model'"),
+            (r'"Model Year"', '"model"'),
+            (r"'Year'", "'model'"),
+            (r'"Year"', '"model"'),
             (r"'Description'", "'descripcion'"),
             (r'"Description"', '"descripcion"'),
             (r"'SKU'", "'referencia'"),
@@ -41,15 +41,15 @@ def update_field_names_in_file(file_path):
             
             # Variable and field access patterns
             (r"details\['Make'\]", "details['maker']"),
-            (r"details\['Model Year'\]", "details['fabrication_year']"),
-            (r"details\['Year'\]", "details['fabrication_year']"),
+            (r"details\['Model Year'\]", "details['model']"),
+            (r"details\['Year'\]", "details['model']"),
             (r"details\['Series'\]", "details['series']"),
             (r"details\['Description'\]", "details['descripcion']"),
             (r"details\['SKU'\]", "details['referencia']"),
             
             # Database column references
             (r"vin_make", "maker"),
-            (r"vin_year", "fabrication_year"),
+            (r"vin_year", "model"),
             (r"vin_series", "series"),
             (r"original_description", "original_descripcion"),
             (r"normalized_description", "normalized_descripcion"),
@@ -118,7 +118,7 @@ def main():
     print("="*80)
     print("Converting to original consolidado.json field names:")
     print("  Make -> maker")
-    print("  Year/Model Year -> fabrication_year")
+    print("  Year/Model Year -> model")
     print("  Series -> series (no change)")
     print("  Description -> descripcion")
     print("  SKU -> referencia")

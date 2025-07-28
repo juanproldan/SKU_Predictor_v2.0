@@ -93,7 +93,7 @@ def validate_vin_check_digit(vin_str):
     """
     Validate VIN check digit (position 9) using the standard algorithm.
     This is optional validation - some VINs may have incorrect check digits
-    but still be valid for maker/fabrication_year/series extraction.
+    but still be valid for maker/model/series extraction.
     """
     # VIN character values for check digit calculation
     char_values = {
@@ -155,7 +155,7 @@ def setup_database(db_path):
         CREATE TABLE IF NOT EXISTS processed_consolidado (
             vin_number TEXT,                    -- Cleaned VINs for VIN training (may be NULL)
             maker TEXT,                         -- For both VIN & SKU training
-            fabrication_year INTEGER,          -- For both VIN & SKU training
+            model INTEGER,          -- For both VIN & SKU training
             series TEXT,                        -- For both VIN & SKU training
             original_descripcion TEXT,          -- For SKU training (may be NULL)
             normalized_descripcion TEXT,        -- For SKU training, processed (may be NULL)
@@ -165,8 +165,8 @@ def setup_database(db_path):
         ''')
         
         # Create indexes for better query performance
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_vin_training ON processed_consolidado (vin_number, maker, fabrication_year, series)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_sku_training ON processed_consolidado (maker, fabrication_year, series, referencia)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_vin_training ON processed_consolidado (vin_number, maker, model, series)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_sku_training ON processed_consolidado (maker, model, series, referencia)')
         
         conn.commit()
         logger.info("Database and 'processed_consolidado' table created/ensured.")
@@ -217,7 +217,7 @@ def process_consolidado_record(record, equivalencias_map):
     # Extract required fields only (removed unused columns)
     vin = record.get('vin_number')
     make = record.get('maker')
-    year = record.get('fabrication_year')
+    year = record.get('model')
     series = record.get('series')
     description = record.get('item_original_descripcion')
     sku = record.get('item_referencia')
@@ -255,7 +255,7 @@ def process_consolidado_record(record, equivalencias_map):
     return {
         'vin_number': cleaned_vin,
         'maker': make,
-        'fabrication_year': year,
+        'model': year,
         'series': series,
         'original_descripcion': description,
         'normalized_descripcion': normalized_descripcion,
@@ -307,7 +307,7 @@ def process_consolidado_to_db(conn, consolidado_path, equivalencias_map):
             # Extract VIN info from record level (simplified - removed unused fields)
             vin_number = record.get('vin_number')
             maker = record.get('maker')  # Field is 'maker'
-            fabrication_year = record.get('fabrication_year')  # Field is 'fabrication_year'
+            model = record.get('model')  # Field is 'model'
             series = record.get('series')  # Field is 'series'
 
             # Process each item in the record
@@ -316,7 +316,7 @@ def process_consolidado_to_db(conn, consolidado_path, equivalencias_map):
                 combined_record = {
                     'vin_number': vin_number,
                     'maker': maker,
-                    'fabrication_year': fabrication_year,
+                    'model': model,
                     'series': series,
                     'item_original_descripcion': item.get('descripcion'),  # Field is 'descripcion'
                     'item_referencia': item.get('referencia')  # Field is 'referencia'
@@ -332,11 +332,11 @@ def process_consolidado_to_db(conn, consolidado_path, equivalencias_map):
                 # Determine training usefulness for statistics
                 has_vin_data = (processed_record['vin_number'] and
                                processed_record['maker'] and
-                               processed_record['fabrication_year'] and
+                               processed_record['model'] and
                                processed_record['series'])
 
                 has_sku_data = (processed_record['maker'] and
-                               processed_record['fabrication_year'] and
+                               processed_record['model'] and
                                processed_record['series'] and
                                processed_record['normalized_descripcion'] and
                                processed_record['referencia'])
@@ -352,13 +352,13 @@ def process_consolidado_to_db(conn, consolidado_path, equivalencias_map):
                 try:
                     cursor.execute('''
                     INSERT INTO processed_consolidado (
-                        vin_number, maker, fabrication_year, series,
+                        vin_number, maker, model, series,
                         original_descripcion, normalized_descripcion, referencia
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         processed_record['vin_number'],
                         processed_record['maker'],
-                        processed_record['fabrication_year'],
+                        processed_record['model'],
                         processed_record['series'],
                         processed_record['original_descripcion'],
                         processed_record['normalized_descripcion'],
@@ -444,13 +444,13 @@ def main():
             cursor.execute("""
                 SELECT COUNT(*) FROM processed_consolidado
                 WHERE vin_number IS NOT NULL AND maker IS NOT NULL
-                AND fabrication_year IS NOT NULL AND series IS NOT NULL
+                AND model IS NOT NULL AND series IS NOT NULL
             """)
             vin_training_ready = cursor.fetchone()[0]
 
             cursor.execute("""
                 SELECT COUNT(*) FROM processed_consolidado
-                WHERE maker IS NOT NULL AND fabrication_year IS NOT NULL
+                WHERE maker IS NOT NULL AND model IS NOT NULL
                 AND series IS NOT NULL AND normalized_descripcion IS NOT NULL
                 AND sku IS NOT NULL
             """)

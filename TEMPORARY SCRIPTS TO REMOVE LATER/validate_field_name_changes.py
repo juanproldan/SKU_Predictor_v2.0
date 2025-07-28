@@ -67,7 +67,7 @@ def test_database_schema():
         
         print("✅ Database schema validation passed")
         print("   - Uses 'maker' instead of 'vin_make'")
-        print("   - Uses 'fabrication_year' instead of 'vin_year'")
+        print("   - Uses 'model' instead of 'vin_year'")
         print("   - Uses 'series' instead of 'vin_series'")
         print("   - Uses 'original_descripcion' instead of 'original_description'")
         print("   - Uses 'normalized_descripcion' instead of 'normalized_description'")
@@ -179,7 +179,7 @@ def main():
     print("="*80)
     print("Validating that field names have been successfully standardized")
     print("to use original consolidado.json format:")
-    print("  - maker, series, model (fabrication_year), referencia, descripcion")
+    print("  - maker, series, model, referencia, descripcion")
     print("="*80)
     
     tests = [

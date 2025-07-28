@@ -92,7 +92,7 @@ class ComprehensiveValidator:
             # Try different possible field names
             desc_fields = ['descripcion', 'description', 'desc', 'Descripcion', 'descripcion']
             make_fields = ['maker', 'make', 'marca', 'Marca']
-            year_fields = ['fabrication_year', 'year', 'ano', 'Ano', 'anio', 'Anio']
+            year_fields = ['model', 'year', 'ano', 'Ano', 'anio', 'Anio']
             sku_fields = ['referencia', 'referencia', 'codigo', 'Codigo']
 
             # Find the correct field names
@@ -167,7 +167,7 @@ class ComprehensiveValidator:
             },
             {
                 'name': 'Make+Year Filter',
-                'query': "SELECT COUNT(*) FROM processed_consolidado WHERE maker = 'TOYOTA' AND fabrication_year = '2020'",
+                'query': "SELECT COUNT(*) FROM processed_consolidado WHERE maker = 'TOYOTA' AND model = '2020'",
                 'expected_fast': True
             },
             {
@@ -185,7 +185,7 @@ class ComprehensiveValidator:
                 'query': """
                     SELECT referencia, COUNT(*) as frequency 
                     FROM processed_consolidado 
-                    WHERE maker = 'TOYOTA' AND fabrication_year = '2020' 
+                    WHERE maker = 'TOYOTA' AND model = '2020' 
                     AND normalized_descripcion LIKE '%parachoques%'
                     GROUP BY referencia ORDER BY frequency DESC LIMIT 5
                 """,
@@ -381,10 +381,10 @@ class ComprehensiveValidator:
         # Create test prediction patterns
         test_patterns = []
         for record in self.test_data['records'][:50]:  # Use first 50 records
-            if all(record.get(key) for key in ['maker', 'fabrication_year', 'Series', 'descripcion']):
+            if all(record.get(key) for key in ['maker', 'model', 'Series', 'descripcion']):
                 test_patterns.append({
                     'make': record['maker'],
-                    'year': str(record['fabrication_year']),
+                    'year': str(record['model']),
                     'series': record['Series'],
                     'description': record['descripcion']
                 })
@@ -515,7 +515,7 @@ class ComprehensiveValidator:
             try:
                 # Extract prediction inputs
                 make = record.get('maker', '')
-                year = str(record.get('fabrication_year', ''))
+                year = str(record.get('model', ''))
                 series = record.get('Series', '')
                 description = record.get('descripcion', '')
                 expected_sku = record.get('referencia', '')

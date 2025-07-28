@@ -36,7 +36,7 @@ def validate_vin_check_digit(vin_str):
     """
     Validate VIN check digit (position 9) using the standard algorithm.
     This is optional validation - some VINs may have incorrect check digits
-    but still be valid for maker/fabrication_year/series extraction.
+    but still be valid for maker/model/series extraction.
     """
     # VIN character values for check digit calculation
     char_values = {
@@ -112,7 +112,7 @@ def clean_vin_for_training(vin):
         return None
 
     # Optional: Validate check digit (commented out as it may be too strict)
-    # Many VINs in databases have incorrect check digits but valid maker/fabrication_year/series
+    # Many VINs in databases have incorrect check digits but valid maker/model/series
     # Uncomment the next 3 lines for stricter validation:
     # if not validate_vin_check_digit(vin_str):
     #     return None
@@ -223,11 +223,11 @@ def load_and_prepare_data():
 
         # Query the database for relevant data
         query = """
-        SELECT vin_number, maker as maker, fabrication_year as fabrication_year, series as series
+        SELECT vin_number, maker as maker, model as model, series as series
         FROM processed_consolidado
         WHERE vin_number IS NOT NULL
           AND maker IS NOT NULL
-          AND fabrication_year IS NOT NULL
+          AND model IS NOT NULL
           AND series IS NOT NULL
         """
 
@@ -272,8 +272,8 @@ def load_and_prepare_data():
             features = extract_vin_features(vin)
             if features:
                 valid_vins += 1
-                # Use fabrication_year as the target year
-                year_target = row['fabrication_year']
+                # Use model as the target year
+                year_target = row['model']
 
                 # Decode year from VIN code for potential consistency check
                 year_decoded = decode_year(features['year_code'])
@@ -288,7 +288,7 @@ def load_and_prepare_data():
                     'maker': row['maker'],
                     'series': row['series'],
                     # Target year as string
-                    'fabrication_year': str(year_target)
+                    'model': str(year_target)
                 })
             else:
                 # This catches additional filtering from extract_vin_features
@@ -499,11 +499,11 @@ def train_and_save_models(df):
         print(f"Year Model Accuracy: {accuracy:.4f}")
 
         joblib.dump(model_year, os.path.join(
-            MODEL_OUTPUT_DIR, 'fabrication_year_model.joblib'))
+            MODEL_OUTPUT_DIR, 'model_model.joblib'))
         joblib.dump(encoder_x_year, os.path.join(
-            MODEL_OUTPUT_DIR, 'fabrication_year_encoder_x.joblib'))
+            MODEL_OUTPUT_DIR, 'model_encoder_x.joblib'))
         joblib.dump(encoder_y_year, os.path.join(
-            MODEL_OUTPUT_DIR, 'fabrication_year_encoder_y.joblib'))
+            MODEL_OUTPUT_DIR, 'model_encoder_y.joblib'))
         print("Year model and encoders saved.")
 
         # Train PyTorch model for Year
@@ -512,7 +512,7 @@ def train_and_save_models(df):
         train_pytorch_model(X_train, y_train, X_test, y_test,
                             input_size=X_train.shape[1],
                             num_classes=num_classes,
-                            model_name="fabrication_year")
+                            model_name="model")
 
     # --- 3. Series Prediction (using WMI + VDS) ---
     # This is the most complex and likely least accurate part
