@@ -166,7 +166,7 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
 
         # Get the latest records (assuming higher IDs are newer)
         # This is a simple approach - in production you'd want actual timestamps
-        total_query = "SELECT COUNT(*) FROM processed_consolidado WHERE sku IS NOT NULL"
+        total_query = "SELECT COUNT(*) FROM processed_consolidado WHERE referencia IS NOT NULL"
         total_count = pd.read_sql_query(total_query, conn).iloc[0, 0]
 
         # Take approximately the last week's worth of data (estimate)
@@ -174,9 +174,9 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
         recent_limit = max(1000, int(total_count * 0.02))  # At least 1000 records
 
         query = f"""
-        SELECT vin_number, normalized_descripcion, sku
+        SELECT vin_number, normalized_descripcion, referencia
         FROM processed_consolidado
-        WHERE sku IS NOT NULL
+        WHERE referencia IS NOT NULL
         ORDER BY ROWID DESC
         LIMIT {recent_limit}
         """
@@ -187,9 +187,9 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
 
         # Optionally limit the data size for faster testing
         if SAMPLE_SIZE:
-            query = f"SELECT vin_number, normalized_descripcion, sku FROM processed_consolidado WHERE sku IS NOT NULL LIMIT {SAMPLE_SIZE}"
+            query = f"SELECT vin_number, normalized_descripcion, referencia FROM processed_consolidado WHERE referencia IS NOT NULL LIMIT {SAMPLE_SIZE}"
         else:
-            query = "SELECT vin_number, normalized_descripcion, sku FROM processed_consolidado WHERE sku IS NOT NULL"
+            query = "SELECT vin_number, normalized_descripcion, referencia FROM processed_consolidado WHERE referencia IS NOT NULL"
 
     if not os.path.exists(DB_PATH):
         print(f"Error: Database file not found at {DB_PATH}")

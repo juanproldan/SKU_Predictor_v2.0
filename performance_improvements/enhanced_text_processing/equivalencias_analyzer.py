@@ -45,10 +45,10 @@ class EquivalenciasAnalyzer:
         
         # Get descriptions that map to same SKUs frequently
         query = """
-        SELECT normalized_descripcion, sku, COUNT(*) as frequency
+        SELECT normalized_descripcion, referencia, COUNT(*) as frequency
         FROM processed_consolidado 
-        WHERE sku IS NOT NULL AND sku != '' AND normalized_descripcion IS NOT NULL
-        GROUP BY normalized_descripcion, sku
+        WHERE referencia IS NOT NULL AND referencia != '' AND normalized_descripcion IS NOT NULL
+        GROUP BY normalized_descripcion, referencia
         HAVING frequency >= ?
         ORDER BY referencia, frequency DESC
         """
@@ -62,7 +62,7 @@ class EquivalenciasAnalyzer:
         sku_groups = df.groupby('referencia')
         potential_equivalencias = {}
         
-        for sku, group in sku_groups:
+        for referencia, group in sku_groups:
             descriptions = group['normalized_descripcion'].tolist()
             
             if len(descriptions) > 1:
@@ -74,9 +74,9 @@ class EquivalenciasAnalyzer:
                         # Calculate total frequency for this group
                         total_freq = group[group['normalized_descripcion'].isin(desc_group)]['frequency'].sum()
                         
-                        equivalencia_key = f"{sku}_{group_id}"
+                        equivalencia_key = f"{referencia}_{group_id}"
                         potential_equivalencias[equivalencia_key] = {
-                            'referencia': sku,
+                            'referencia': referencia,
                             'descriptions': desc_group,
                             'total_frequency': total_freq,
                             'description_count': len(desc_group),
@@ -97,7 +97,7 @@ class EquivalenciasAnalyzer:
         # Show top discoveries
         print(f"\n📋 Top 10 Discovered Equivalencias:")
         for i, (key, data) in enumerate(list(sorted_equivalencias.items())[:10]):
-            print(f"  {i+1}. SKU: {data['referencia']} (Quality: {data['quality_score']:.2f})")
+            print(f"  {i+1}. referencia: {data['referencia']} (Quality: {data['quality_score']:.2f})")
             print(f"     Descriptions: {', '.join(data['descriptions'][:3])}{'...' if len(data['descriptions']) > 3 else ''}")
             print(f"     Frequency: {data['total_frequency']}, Count: {data['description_count']}")
         
@@ -242,9 +242,9 @@ class EquivalenciasAnalyzer:
         
         for synonym in synonyms:
             query = """
-            SELECT DISTINCT sku 
+            SELECT DISTINCT referencia 
             FROM processed_consolidado 
-            WHERE normalized_descripcion LIKE ? AND sku IS NOT NULL AND sku != ''
+            WHERE normalized_descripcion LIKE ? AND referencia IS NOT NULL AND referencia != ''
             """
             
             cursor = conn.cursor()
@@ -347,7 +347,7 @@ class EquivalenciasAnalyzer:
         
         for i, (key, data) in enumerate(list(self.discovered_equivalencias.items())[:5]):
             report += f"""
-   {i+1}. SKU: {data['referencia']} (Quality: {data['quality_score']:.2f})
+   {i+1}. referencia: {data['referencia']} (Quality: {data['quality_score']:.2f})
       Descriptions: {', '.join(data['descriptions'])}
       Frequency: {data['total_frequency']}"""
         

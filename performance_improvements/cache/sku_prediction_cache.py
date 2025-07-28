@@ -82,7 +82,7 @@ class SKUPredictionCache:
         conn.commit()
         conn.close()
     
-    def _generate_cache_key(self, make: str, year: str, series: str, description: str) -> str:
+    def _generate_cache_key(self, make: str, year: str, series: str, descripcion: str) -> str:
         """
         Generate unique cache key for prediction inputs
         Uses maker/model/series + normalized description for optimal hit rate
@@ -91,19 +91,20 @@ class SKUPredictionCache:
         normalized_input = f"{make.lower().strip()}|{year.strip()}|{series.lower().strip()}|{description.lower().strip()}"
         return hashlib.md5(normalized_input.encode()).hexdigest()
     
-    def get_cached_prediction(self, make: str, year: str, series: str, description: str) -> Optional[Dict]:
+    def get_cached_prediction(self, maker: str, model: str, series: str, descripcion: str) -> Optional[Dict]:
         """
         Retrieve cached prediction if available
         Returns: Dict with predictions, confidence scores, and sources, or None if not cached
         """
-        cache_key = self._generate_cache_key(make, year, series, description)
+        descripcion_hash = hashlib.md5(descripcion.encode()).hexdigest()[:8]
+        cache_key = f'{maker}_{model}_{series}_{descripcion_hash}'
         current_time = time.time()
-        
+
         # Level 1: Check in-memory cache first (fastest)
         if cache_key in self.memory_cache:
             self.hit_count += 1
             cache_entry = self.memory_cache[cache_key]
-            print(f"  🚀 Cache HIT (Memory): {description[:30]}... (used {cache_entry.get('hit_count', 1)} times)")
+            print(f"  🚀 Cache HIT (Memory): {descripcion[:30]}... (used {cache_entry.get('hit_count', 1)} times)")
             return cache_entry['data']
         
         # Level 2: Check persistent cache database
@@ -148,13 +149,14 @@ class SKUPredictionCache:
         
         conn.close()
         self.miss_count += 1
-        print(f"  ❌ Cache MISS: {description[:30]}...")
+        print(f"  ❌ Cache MISS: {descripcion[:30]}...")
         return None
-    
-    def cache_prediction(self, make: str, year: str, series: str, description: str, 
+
+    def cache_prediction(self, maker: str, model: str, series: str, descripcion: str,
                         predictions: List[Dict], confidence_scores: List[float], sources: List[str]):
         """Cache a new prediction result"""
-        cache_key = self._generate_cache_key(make, year, series, description)
+        descripcion_hash = hashlib.md5(descripcion.encode()).hexdigest()[:8]
+        cache_key = f'{maker}_{model}_{series}_{descripcion_hash}'
         current_time = time.time()
         
         cached_data = {
@@ -172,10 +174,10 @@ class SKUPredictionCache:
         
         cursor.execute('''
         INSERT OR REPLACE INTO prediction_cache 
-        (cache_key, make, year, series, description, predictions, confidence_scores, sources, timestamp, last_accessed)
+        (cache_key = f'{maker}_{model}_{series}_{descripcion_hash}', predictions, confidence_scores, sources, timestamp, last_accessed)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            cache_key, make, year, series, description,
+            cache_key = f'{maker}_{model}_{series}_{descripcion_hash}',
             json.dumps(predictions), json.dumps(confidence_scores), json.dumps(sources),
             current_time, current_time
         ))
@@ -183,7 +185,7 @@ class SKUPredictionCache:
         conn.commit()
         conn.close()
         
-        print(f"  💾 Cached prediction: {description[:30]}... (Make: {make}, Year: {year}, Series: {series})")
+        print(f"  💾 Cached prediction: {description[:30]}... (maker: {make}, model: {year}, series: {series})")
     
     def _add_to_memory_cache(self, cache_key: str, data: Dict, hit_count: int):
         """Add item to memory cache with LRU eviction"""

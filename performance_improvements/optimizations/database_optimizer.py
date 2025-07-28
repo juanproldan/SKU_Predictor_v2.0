@@ -45,12 +45,12 @@ class DatabaseOptimizer:
                ON processed_consolidado(maker, model, series, normalized_descripcion)''',
             
             # 2. Index for SKU frequency analysis (Database source queries)
-            '''CREATE INDEX IF NOT EXISTS idx_sku_frequency 
-               ON processed_consolidado(sku, maker, model)''',
-            
+            '''CREATE INDEX IF NOT EXISTS idx_referencia_frequency
+               ON processed_consolidado(referencia, maker, model)''',
+
             # 3. Index for description-based fuzzy matching
-            '''CREATE INDEX IF NOT EXISTS idx_description_search 
-               ON processed_consolidado(normalized_descripcion, sku)''',
+            '''CREATE INDEX IF NOT EXISTS idx_description_search
+               ON processed_consolidado(normalized_descripcion, referencia)''',
             
             # 4. Index for VIN-based queries (VIN prediction)
             '''CREATE INDEX IF NOT EXISTS idx_vin_lookup 
@@ -61,12 +61,12 @@ class DatabaseOptimizer:
                ON processed_consolidado(maker, model)''',
             
             # 6. Index for SKU-only queries (SKU validation)
-            '''CREATE INDEX IF NOT EXISTS idx_sku_only 
-               ON processed_consolidado(sku)''',
-            
+            '''CREATE INDEX IF NOT EXISTS idx_referencia_only
+               ON processed_consolidado(referencia)''',
+
             # 7. Covering index for common SELECT patterns
-            '''CREATE INDEX IF NOT EXISTS idx_covering_sku_search 
-               ON processed_consolidado(maker, model, series, sku, normalized_descripcion)'''
+            '''CREATE INDEX IF NOT EXISTS idx_covering_referencia_search
+               ON processed_consolidado(maker, model, series, referencia, normalized_descripcion)'''
         ]
         
         created_count = 0
@@ -113,7 +113,7 @@ class DatabaseOptimizer:
             ("Make+Year Filter", "SELECT COUNT(*) FROM processed_consolidado WHERE maker = 'Toyota' AND model = 2020"),
             
             # Query 4: SKU frequency analysis (Database source)
-            ("SKU Frequency", "SELECT referencia, COUNT(*) FROM processed_consolidado WHERE sku IS NOT NULL GROUP BY referencia ORDER BY COUNT(*) DESC LIMIT 10"),
+            ("SKU Frequency", "SELECT referencia, COUNT(*) FROM processed_consolidado WHERE referencia IS NOT NULL GROUP BY referencia ORDER BY COUNT(*) DESC LIMIT 10"),
             
             # Query 5: Description search (fuzzy matching)
             ("Description Search", "SELECT COUNT(*) FROM processed_consolidado WHERE normalized_descripcion LIKE '%parachoques%'"),
@@ -183,11 +183,11 @@ class DatabaseOptimizer:
             stats['total_records'] = cursor.fetchone()[0]
             
             # Records with SKUs
-            cursor.execute("SELECT COUNT(*) FROM processed_consolidado WHERE sku IS NOT NULL AND sku != ''")
+            cursor.execute("SELECT COUNT(*) FROM processed_consolidado WHERE referencia IS NOT NULL AND referencia != ''")
             stats['records_with_sku'] = cursor.fetchone()[0]
-            
+
             # Unique SKUs
-            cursor.execute("SELECT COUNT(DISTINCT sku) FROM processed_consolidado WHERE sku IS NOT NULL AND sku != ''")
+            cursor.execute("SELECT COUNT(DISTINCT referencia) FROM processed_consolidado WHERE referencia IS NOT NULL AND referencia != ''")
             stats['unique_skus'] = cursor.fetchone()[0]
             
             # Unique makes

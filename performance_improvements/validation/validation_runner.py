@@ -209,7 +209,7 @@ def generate_executive_summary(results: dict, output_file: str):
         summary_lines.append(f"Data Sample:")
         summary_lines.append(f"  - Total Records: {stats.get('total_records', 'N/A')}")
         summary_lines.append(f"  - Unique Descriptions: {stats.get('unique_descriptions', 'N/A')}")
-        summary_lines.append(f"  - Records with SKU: {stats.get('records_with_sku', 'N/A')}")
+        summary_lines.append(f"  - Records with referencia: {stats.get('records_with_sku', 'N/A')}")
         summary_lines.append(f"  - Avg Description Length: {stats.get('avg_description_length', 0):.1f} words")
         summary_lines.append("")
     

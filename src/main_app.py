@@ -23,7 +23,7 @@ try:
     if parent_dir not in sys.path:
         sys.path.insert(0, parent_dir)
 
-    # Cache disabled: from performance_improvements.cache.sku_prediction_cache import initialize_cache, get_cache
+    # Cache disabled: from performance_improvements.cache.referencia_prediction_cache import initialize_cache, get_cache
     from performance_improvements.optimizations.database_optimizer import initialize_database_optimization, get_optimizer, get_query_cache
     from performance_improvements.optimizations.parallel_predictor import initialize_parallel_predictor, get_parallel_predictor
     from performance_improvements.enhanced_text_processing.smart_text_processor import initialize_smart_text_processor, get_smart_processor
@@ -36,7 +36,7 @@ except ImportError as e:
 # Import our PyTorch model implementation
 try:
     # Try relative imports first (for PyInstaller)
-    from models.sku_nn_pytorch import load_model, predict_sku
+    from models.referencia_nn_pytorch import load_model, predict_sku
     from utils.text_utils import normalize_text
     from utils.dummy_tokenizer import DummyTokenizer
     from train_vin_predictor import extract_vin_features_production, decode_year
@@ -102,7 +102,7 @@ maestro_data_global = []  # This will hold the list of dictionaries
 model_maker = None
 encoder_x_maker = None
 encoder_y_maker = None
-model_year = None
+model = None
 encoder_x_year = None
 encoder_y_year = None
 model_series = None
@@ -112,7 +112,7 @@ encoder_y_series = None
 # SKU NN Model and Encoders/Tokenizer
 sku_nn_model = None
 sku_nn_encoder_make = None
-sku_nn_encoder_model_year = None
+sku_nn_encoder_model = None
 sku_nn_encoder_series = None
 sku_nn_tokenizer_desc = None  # Assuming description is an input
 sku_nn_encoder_referencia = None
@@ -142,7 +142,7 @@ class FixacarApp:
         global equivalencias_map_global, synonym_expansion_map_global, maestro_data_global
         global abbreviations_map_global, user_corrections_map_global
         global model_maker, encoder_x_maker, encoder_y_maker
-        global model_year, encoder_x_year, encoder_y_year
+        global model, encoder_x_year, encoder_y_year
         global model_series, encoder_x_series, encoder_y_series
 
         print("--- Loading Application Data & Models ---")
@@ -162,7 +162,7 @@ class FixacarApp:
                 MODEL_DIR, 'makerr_encoder_y.joblib'))
             print("  Maker model loaded.")
 
-            model_year = joblib.load(os.path.join(
+            model = joblib.load(os.path.join(
                 MODEL_DIR, 'model_model.joblib'))
             encoder_x_year = joblib.load(os.path.join(
                 MODEL_DIR, 'model_encoder_x.joblib'))
@@ -185,15 +185,15 @@ class FixacarApp:
             messagebox.showerror(
                 "Model Loading Error", f"Could not load model file: {e}\nPlease ensure models are trained and present in the '{MODEL_DIR}' directory.")
             # Set models to None so prediction attempts fail gracefully
-            model_maker, model_year, model_series = None, None, None
+            model_maker, model, model_series = None, None, None
         except Exception as e:
             print(f"An unexpected error occurred loading models: {e}")
             messagebox.showerror(
                 "Model Loading Error", f"An unexpected error occurred loading models: {e}")
-            model_maker, model_year, model_series = None, None, None
+            model_maker, model, model_series = None, None, None
 
         # Load SKU NN Model and preprocessors
-        global sku_nn_model, sku_nn_encoder_make, sku_nn_encoder_model_year, sku_nn_encoder_series, sku_nn_tokenizer_desc, sku_nn_encoder_referencia
+        global sku_nn_model, sku_nn_encoder_make, sku_nn_encoder_model, sku_nn_encoder_series, sku_nn_tokenizer_desc, sku_nn_encoder_referencia
         print("Loading SKU NN model and preprocessors...")
         try:
             # Only load the optimized PyTorch model and encoders
@@ -203,7 +203,7 @@ class FixacarApp:
             sku_nn_encoder_make = joblib.load(os.path.join(
                 SKU_NN_MODEL_DIR, 'encoder_Make.joblib'))
             print("  SKU NN Make encoder loaded.")
-            sku_nn_encoder_model_year = joblib.load(os.path.join(
+            sku_nn_encoder_model = joblib.load(os.path.join(
                 SKU_NN_MODEL_DIR, 'encoder_Model Year.joblib'))
             print("  SKU NN Model Year encoder loaded.")
             sku_nn_encoder_series = joblib.load(os.path.join(
@@ -269,7 +269,7 @@ class FixacarApp:
 
         try:
             # Cache disabled for stability
-            self.sku_cache = None
+            self.referencia_cache = None
             print("  ⚠️ SKU prediction cache disabled for stability")
 
             # Initialize database optimization
@@ -303,7 +303,7 @@ class FixacarApp:
         except Exception as e:
             print(f"❌ Error initializing performance optimizations: {e}")
             # Set fallback values
-            self.sku_cache = None
+            self.referencia_cache = None
             self.db_optimizer = None
             self.query_cache = None
             self.parallel_predictor = None
@@ -424,11 +424,11 @@ class FixacarApp:
         Only return SKUs that represent significant consensus, not obvious errors.
 
         Args:
-            sku_frequency_pairs: List of (sku, frequency) tuples
+            sku_frequency_pairs: List of (referencia, frequency) tuples
             min_consensus_ratio: Minimum ratio of total occurrences for a SKU to be considered
 
         Returns:
-            Filtered list of (sku, frequency) tuples with only consensus SKUs
+            Filtered list of (referencia, frequency) tuples with only consensus SKUs
         """
         if not sku_frequency_pairs:
             return []
@@ -439,17 +439,17 @@ class FixacarApp:
         sorted_pairs = sorted(sku_frequency_pairs, key=lambda x: x[1], reverse=True)
 
         consensus_skus = []
-        for sku, frequency in sorted_pairs:
+        for referencia, frequency in sorted_pairs:
             ratio = frequency / total_occurrences
 
-            print(f"    Consensus analysis: {sku} appears {frequency}/{total_occurrences} times ({ratio:.2%})")
+            print(f"    Consensus analysis: {referencia} appears {frequency}/{total_occurrences} times ({ratio:.2%})")
 
             # Include SKUs that meet minimum consensus threshold
             if ratio >= min_consensus_ratio:
-                consensus_skus.append((sku, frequency))
+                consensus_skus.append((referencia, frequency))
                 print(f"      ✅ Included: Strong consensus ({ratio:.2%} ≥ {min_consensus_ratio:.1%})")
             elif frequency >= 20:  # Always include high-frequency SKUs even if ratio is low
-                consensus_skus.append((sku, frequency))
+                consensus_skus.append((referencia, frequency))
                 print(f"      ✅ Included: High frequency ({frequency} ≥ 20 occurrences)")
             else:
                 print(f"      ❌ Excluded: Weak consensus ({ratio:.2%} < {min_consensus_ratio:.1%}, freq: {frequency})")
@@ -462,34 +462,34 @@ class FixacarApp:
         Merge and deduplicate results from both normalized_descripcion and original_descripcion searches.
 
         Args:
-            normalized_results: List of (sku, frequency, 'normalized'/'normalized_fuzzy') tuples
-            original_results: List of (sku, frequency, 'original'/'original_fuzzy') tuples
+            normalized_results: List of (referencia, frequency, 'normalized'/'normalized_fuzzy') tuples
+            original_results: List of (referencia, frequency, 'original'/'original_fuzzy') tuples
 
         Returns:
-            Merged list of (sku, frequency) tuples with combined frequencies for duplicate SKUs
+            Merged list of (referencia, frequency) tuples with combined frequencies for duplicate SKUs
         """
         # Dictionary to accumulate frequencies for each SKU
         sku_frequency_map = {}
         sku_sources = {}  # Track which sources found each SKU
 
         # Process normalized results
-        for sku, frequency, match_type in normalized_results:
-            if sku not in sku_frequency_map:
-                sku_frequency_map[sku] = 0
-                sku_sources[sku] = []
-            sku_frequency_map[sku] += frequency
-            sku_sources[sku].append(f"norm({match_type})")
+        for referencia, frequency, match_type in normalized_results:
+            if referencia not in sku_frequency_map:
+                sku_frequency_map[referencia] = 0
+                sku_sources[referencia] = []
+            sku_frequency_map[referencia] += frequency
+            sku_sources[referencia].append(f"norm({match_type})")
 
         # Process original results
-        for sku, frequency, match_type in original_results:
-            if sku not in sku_frequency_map:
-                sku_frequency_map[sku] = 0
-                sku_sources[sku] = []
-            sku_frequency_map[sku] += frequency
-            sku_sources[sku].append(f"orig({match_type})")
+        for referencia, frequency, match_type in original_results:
+            if referencia not in sku_frequency_map:
+                sku_frequency_map[referencia] = 0
+                sku_sources[referencia] = []
+            sku_frequency_map[referencia] += frequency
+            sku_sources[referencia].append(f"orig({match_type})")
 
         # Convert back to list format and log results
-        merged_results = [(sku, freq) for sku, freq in sku_frequency_map.items()]
+        merged_results = [(referencia, freq) for referencia, freq in sku_frequency_map.items()]
 
         if merged_results:
             print(f"    📊 Dual search results merged:")
@@ -498,9 +498,9 @@ class FixacarApp:
             print(f"      - Total unique SKUs: {len(merged_results)}")
 
             # Show details for each SKU
-            for sku, freq in sorted(merged_results, key=lambda x: x[1], reverse=True):
-                sources = ", ".join(sku_sources[sku])
-                print(f"      - {sku}: {freq} total frequency (sources: {sources})")
+            for referencia, freq in sorted(merged_results, key=lambda x: x[1], reverse=True):
+                sources = ", ".join(sku_sources[referencia])
+                print(f"      - {referencia}: {freq} total frequency (sources: {sources})")
         else:
             print(f"    📊 No matches found in either normalized or original descriptions")
 
@@ -982,7 +982,7 @@ class FixacarApp:
         # Re-process parts with the corrected text and existing vehicle details
         self._process_parts_and_continue_search()
 
-    def create_abbreviated_version(self, description: str) -> str:
+    def create_abbreviated_version(self, descripcion: str) -> str:
         """
         Create abbreviated version of description to match database format.
         Database uses heavily abbreviated forms like 'paragolpes del' instead of 'paragolpes delantero'.
@@ -1655,7 +1655,7 @@ class FixacarApp:
         Uses the loaded SKU NN model to predict an SKU.
         Returns the predicted SKU string or None if prediction fails or model not available.
         """
-        if not sku_nn_model or not sku_nn_encoder_make or not sku_nn_encoder_model_year or \
+        if not sku_nn_model or not sku_nn_encoder_make or not sku_nn_encoder_model or \
            not sku_nn_encoder_series or not sku_nn_tokenizer_desc or not sku_nn_encoder_referencia:
             print(
                 "SKU NN model or one of its preprocessors is not loaded. Skipping NN prediction.")
@@ -1668,8 +1668,8 @@ class FixacarApp:
             # Create a dictionary of encoders to pass to predict_sku
             encoders = {
                 'maker': sku_nn_encoder_make,
-                'model': sku_nn_encoder_model_year,
-                'Series': sku_nn_encoder_series,
+                'model': sku_nn_encoder_model,
+                'series': sku_nn_encoder_series,
                 'tokenizer': sku_nn_tokenizer_desc,
                 'referencia': sku_nn_encoder_referencia
             }
@@ -1678,29 +1678,29 @@ class FixacarApp:
             predicted_sku, confidence = predict_sku(
                 model=sku_nn_model,
                 encoders=encoders,
-                make=make,
-                model_year=model_year,
+                make=maker,
+                model_year=model,
                 series=series,
-                description=description,
+                description=descripcion,
                 device=device
             )
 
             if predicted_sku and predicted_sku.strip():
                 print(
-                    f"  SKU NN Prediction for '{description}': {predicted_sku} (Confidence: {confidence:.4f})")
+                    f"  SKU NN Prediction for '{descripcion}': {predicted_sku} (Confidence: {confidence:.4f})")
                 return predicted_sku, confidence
             else:
                 print(
-                    f"  SKU NN Prediction failed for '{description}' or returned empty SKU")
+                    f"  SKU NN Prediction failed for '{descripcion}' or returned empty SKU")
                 return None
 
         except ValueError as ve:
             # This can happen if a category (maker, model, series) was not seen during training
             print(
-                f"  SKU NN Prediction Error: Could not encode inputs for '{description}'. Untrained category? Details: {ve}")
+                f"  SKU NN Prediction Error: Could not encode inputs for '{descripcion}'. Untrained category? Details: {ve}")
             return None
         except Exception as e:
-            print(f"  Error during SKU NN prediction for '{description}': {e}")
+            print(f"  Error during SKU NN prediction for '{descripcion}': {e}")
             return None
 
     def find_skus_handler(self):
@@ -1759,7 +1759,7 @@ class FixacarApp:
 
     def predict_vin_details(self, vin: str) -> dict | None:
         """Predicts maker, model, series using loaded models."""
-        if not model_maker or not model_year or not model_series:
+        if not model_maker or not model or not model_series:
             print("Error: Prediction models not loaded.")
             messagebox.showerror(
                 "Prediction Error", "VIN prediction models are not loaded. Cannot proceed.")
@@ -1772,7 +1772,7 @@ class FixacarApp:
             return None
 
         details = {"maker": "N/A", "model": "N/A",
-                   "Series": "N/A", "Model": "N/A", "Body Class": "N/A"}
+                   "series": "N/A", "Model": "N/A", "Body Class": "N/A"}
 
         try:
             # Predict Maker - Use DataFrame with proper column names
@@ -1802,7 +1802,7 @@ class FixacarApp:
             if -1 in year_code_encoded:
                 details['model'] = "Unknown (Code)"
             else:
-                year_pred_encoded = model_year.predict(year_code_encoded)
+                year_pred_encoded = model.predict(year_code_encoded)
                 if year_pred_encoded[0] != -1:
                     year_result = encoder_y_year.inverse_transform(
                         year_pred_encoded.reshape(-1, 1))[0]
@@ -1862,22 +1862,22 @@ class FixacarApp:
     # Removed _prompt_for_manual_details
     # Removed _handle_manual_details_continue
 
-    def _is_valid_sku(self, sku: str) -> bool:
+    def _is_valid_sku(self, referencia: str) -> bool:
         """
         Validates if a SKU is acceptable for suggestions.
         Filters out UNKNOWN, empty, or invalid SKUs.
         """
-        if not sku or not sku.strip():
+        if not referencia or not referencia.strip():
             return False
 
         # Convert to uppercase for consistent checking
-        sku_upper = sku.strip().upper()
+        sku_upper = referencia.strip().upper()
 
         # Filter out UNKNOWN and similar invalid values
         invalid_skus = {'UNKNOWN', 'N/A', 'NULL', 'NONE', '', 'TBD', 'PENDING', 'MANUAL'}
 
         if sku_upper in invalid_skus:
-            print(f"    Filtered out invalid SKU: '{sku}'")
+            print(f"    Filtered out invalid referencia: '{referencia}'")
             return False
 
         return True
@@ -2132,7 +2132,7 @@ class FixacarApp:
                 print(f"  Searching Maestro data ({len(maestro_data_global)} entries)...")
 
                 # Get predicted series for matching
-                predicted_series_val = self.vehicle_details.get('Series', 'N/A')
+                predicted_series_val = self.vehicle_details.get('series', 'N/A')
                 if isinstance(predicted_series_val, np.ndarray):
                     series = str(predicted_series_val.item()) if predicted_series_val.size > 0 else 'N/A'
                 else:
@@ -2181,11 +2181,11 @@ class FixacarApp:
                         desc_match = desc_match_orig or desc_match_exp
 
                         if desc_match:
-                            sku = maestro_entry.get('Confirmed_SKU')
-                            if sku and sku.strip():
+                            referencia = maestro_entry.get('referencia')
+                            if referencia and referencia.strip():
                                 # Store match for frequency analysis
                                 maestro_exact_matches.append({
-                                    'referencia': sku,
+                                    'referencia': referencia,
                                     'match_type': "original" if desc_match_orig else "expanded",
                                     'preprocessed_desc': preprocessed_maestro_desc
                                 })
@@ -2195,8 +2195,8 @@ class FixacarApp:
                     # Count frequency of each SKU
                     sku_frequency = {}
                     for match in maestro_exact_matches:
-                        sku = match['referencia']
-                        sku_frequency[sku] = sku_frequency.get(sku, 0) + 1
+                        referencia = match['referencia']
+                        sku_frequency[referencia] = sku_frequency.get(referencia, 0) + 1
 
                     # Sort SKUs by frequency (most repeated first)
                     sorted_skus = sorted(sku_frequency.items(), key=lambda x: x[1], reverse=True)
@@ -2204,13 +2204,13 @@ class FixacarApp:
                     print(f"    ✅ Found {len(maestro_exact_matches)} Maestro exact matches for {len(sorted_skus)} unique SKUs")
 
                     # Add ALL unique SKUs to suggestions (ordered by frequency)
-                    for sku, frequency in sorted_skus:
+                    for referencia, frequency in sorted_skus:
                         suggestions = self._aggregate_sku_suggestions(
-                            suggestions, sku, 0.90, "Maestro")  # Use 0.90 as specified
-                        print(f"    ✅ Maestro SKU: {sku} (Frequency: {frequency}, Conf: 0.90)")
+                            suggestions, referencia, 0.90, "Maestro")  # Use 0.90 as specified
+                        print(f"    ✅ Maestro referencia: {referencia} (Frequency: {frequency}, Conf: 0.90)")
 
                         # Show match details for first occurrence
-                        first_match = next(m for m in maestro_exact_matches if m['referencia'] == sku)
+                        first_match = next(m for m in maestro_exact_matches if m['referencia'] == referencia)
                         print(f"      Matched via {first_match['match_type']}: '{first_match['preprocessed_desc']}'")
 
                 # Fuzzy description matching removed - only exact matches for Maestro
@@ -2245,16 +2245,16 @@ class FixacarApp:
                             desc_match_exp = preprocessed_maestro_desc == preprocessed_expanded
 
                             if desc_match_orig or desc_match_exp:
-                                sku = maestro_entry.get('Confirmed_SKU')
-                                if sku and sku.strip() and sku.strip().upper() != 'UNKNOWN':
+                                referencia = maestro_entry.get('referencia')
+                                if referencia and referencia.strip() and referencia.strip().upper() != 'UNKNOWN':
                                     match_type = "Original" if desc_match_orig else "Expanded"
                                     fallback_matches.append({
-                                        'referencia': sku.strip(),
+                                        'referencia': referencia.strip(),
                                         'entry': maestro_entry,
                                         'match_type': f"Fallback-{match_type}",
                                         'series': maestro_entry.get('series', 'N/A')
                                     })
-                                    print(f"    ✅ Fallback match: {sku} (Series: {maestro_entry.get('series', 'N/A')})")
+                                    print(f"    ✅ Fallback match: {referencia} (series: {maestro_entry.get('series', 'N/A')})")
 
                     # Process fallback matches with lower confidence (since series wasn't matched)
                     if fallback_matches:
@@ -2263,22 +2263,22 @@ class FixacarApp:
                         # Count frequency of each SKU
                         sku_frequency = {}
                         for match in fallback_matches:
-                            sku = match['referencia']
-                            sku_frequency[sku] = sku_frequency.get(sku, 0) + 1
+                            referencia = match['referencia']
+                            sku_frequency[referencia] = sku_frequency.get(referencia, 0) + 1
 
                         # Sort by frequency (most repeated first)
                         sorted_skus = sorted(sku_frequency.items(), key=lambda x: x[1], reverse=True)
 
                         # Add SKUs with reduced confidence (0.75 instead of 0.90)
-                        for sku, frequency in sorted_skus:
-                            print(f"     📋 Maestro Fallback SKU: {sku} (frequency: {frequency})")
-                            suggestions = self._aggregate_sku_suggestions(suggestions, sku, 0.75, "Maestro-Fallback")
+                        for referencia, frequency in sorted_skus:
+                            print(f"     📋 Maestro Fallback referencia: {referencia} (frequency: {frequency})")
+                            suggestions = self._aggregate_sku_suggestions(suggestions, referencia, 0.75, "Maestro-Fallback")
                     else:
                         print(f"  ❌ No Maestro fallback matches found")
 
                 # --- Neural Network Prediction (Priority 2) ---
                 # Ensure vehicle details are strings for the NN model
-                predicted_series_val = self.vehicle_details.get('Series', 'N/A')
+                predicted_series_val = self.vehicle_details.get('series', 'N/A')
                 if isinstance(predicted_series_val, np.ndarray) and predicted_series_val.size > 0:
                     series_str_for_nn = str(predicted_series_val.item())
                 elif pd.notna(predicted_series_val):
@@ -2300,7 +2300,7 @@ class FixacarApp:
                     # Try preprocessed original description first
                     sku_nn_output = self._get_sku_nn_prediction(
                         make=maker,
-                        model_year=model_str_scalar,
+                        model=model_str_scalar,
                         series=series_str_for_nn,
                         description=preprocessed_original
                     )
@@ -2310,7 +2310,7 @@ class FixacarApp:
                         print(f"  Trying NN prediction with preprocessed expanded description...")
                         sku_nn_output_expanded = self._get_sku_nn_prediction(
                             make=maker,
-                            model_year=model_str_scalar,
+                            model=model_str_scalar,
                             series=series_str_for_nn,
                             description=preprocessed_expanded
                         )
@@ -2331,7 +2331,7 @@ class FixacarApp:
                 # SQLite Search (4-parameter matching: maker, model, series, Description) - Priority 3
                 if model is not None and series.upper() != 'N/A':
                     print(
-                        f"  Searching SQLite DB (Make: {maker}, Year: {model}, Series: {series})...")
+                        f"  Searching SQLite DB (maker: {maker}, model: {model}, series: {series})...")
                     try:
                         # DUAL MATCHING STRATEGY: Search both normalized_descripcion AND original_descripcion
 
@@ -2403,11 +2403,11 @@ class FixacarApp:
                             print(f"    ✅ Found {len(exact_results)} unique SKUs via EXACT match")
                             # Apply consensus logic to filter out minority/outlier SKUs
                             consensus_skus = self.apply_consensus_logic(exact_results, min_consensus_ratio=0.6)
-                            for sku, frequency in consensus_skus:
+                            for referencia, frequency in consensus_skus:
                                 confidence = self.calculate_frequency_based_confidence(frequency, "DB-Exact")
                                 final_confidence = self._calculate_consensus_confidence(confidence, ["DB-Exact"])
-                                suggestions = self._aggregate_sku_suggestions(suggestions, sku, final_confidence, "DB-Exact")
-                                print(f"    ✅ Found in DB (Exact Match): {sku} (Freq: {frequency}, Conf: {final_confidence:.4f})")
+                                suggestions = self._aggregate_sku_suggestions(suggestions, referencia, final_confidence, "DB-Exact")
+                                print(f"    ✅ Found in DB (Exact Match): {referencia} (Freq: {frequency}, Conf: {final_confidence:.4f})")
 
                         # STEP 1B: If no exact matches, try abbreviated description with dual search
                         if not exact_results:
@@ -2475,13 +2475,13 @@ class FixacarApp:
                             consensus_skus = self.apply_consensus_logic(results, min_consensus_ratio=0.6)
 
                             # Process consensus SKUs with frequency-based confidence
-                            for sku, frequency in consensus_skus:
-                                if sku and sku.strip():
+                            for referencia, frequency in consensus_skus:
+                                if referencia and referencia.strip():
                                     confidence = self.calculate_frequency_based_confidence(frequency, "DB-Exact")
                                     suggestions = self._aggregate_sku_suggestions(
-                                        suggestions, sku, confidence, "DB-Exact")
+                                        suggestions, referencia, confidence, "DB-Exact")
                                     print(
-                                        f"    ✅ Found in DB-Exact: {sku} (Freq: {frequency}, Conf: {confidence})")
+                                        f"    ✅ Found in DB-Exact: {referencia} (Freq: {frequency}, Conf: {confidence})")
                         else:
                             print("    No exact matches found in DB")
 
@@ -2519,13 +2519,13 @@ class FixacarApp:
                                 consensus_skus = self.apply_consensus_logic(results, min_consensus_ratio=0.6)
 
                                 # Process consensus SKUs with frequency-based confidence
-                                for sku, frequency in consensus_skus:
-                                    if sku and sku.strip():
+                                for referencia, frequency in consensus_skus:
+                                    if referencia and referencia.strip():
                                         confidence = self.calculate_frequency_based_confidence(frequency, "DB (Fuzzy Series)")
                                         suggestions = self._aggregate_sku_suggestions(
-                                            suggestions, sku, confidence, f"DB (Fuzzy Series + Abbreviated)")
+                                            suggestions, referencia, confidence, f"DB (Fuzzy Series + Abbreviated)")
                                         print(
-                                            f"    ✅ Found in DB (Fuzzy Series + Abbreviated): {sku} (Freq: {frequency}, Conf: {confidence})")
+                                            f"    ✅ Found in DB (Fuzzy Series + Abbreviated): {referencia} (Freq: {frequency}, Conf: {confidence})")
                             else:
                                 print("    No fuzzy series + abbreviated matches found in DB")
 
@@ -2554,14 +2554,14 @@ class FixacarApp:
                             # Merge results
                             results = self.merge_dual_search_results(normalized_orig_results, original_orig_results)
                             total_matches = sum(row[1] for row in results)
-                            for sku, frequency in results:
-                                if sku and sku.strip():
+                            for referencia, frequency in results:
+                                if referencia and referencia.strip():
                                     confidence = round(
                                         0.35 + 0.25 * (frequency / total_matches), 3) if total_matches > 0 else 0.35
                                     suggestions = self._aggregate_sku_suggestions(
-                                        suggestions, sku, confidence, f"DB (Fuzzy Series + Original)")
+                                        suggestions, referencia, confidence, f"DB (Fuzzy Series + Original)")
                                     print(
-                                        f"    Found in DB (Fuzzy Series + Original): {sku} (Freq: {frequency}, Conf: {confidence})")
+                                        f"    Found in DB (Fuzzy Series + Original): {referencia} (Freq: {frequency}, Conf: {confidence})")
 
                         # STEP 2c: If still no match, try fuzzy series matching with expanded description (dual search)
                         if not suggestions:
@@ -2588,14 +2588,14 @@ class FixacarApp:
                             # Merge results
                             results = self.merge_dual_search_results(normalized_exp_results, original_exp_results)
                             total_matches = sum(row[1] for row in results)
-                            for sku, frequency in results:
-                                if sku and sku.strip():
+                            for referencia, frequency in results:
+                                if referencia and referencia.strip():
                                     confidence = round(
                                         0.35 + 0.25 * (frequency / total_matches), 3) if total_matches > 0 else 0.35
                                     suggestions = self._aggregate_sku_suggestions(
-                                        suggestions, sku, confidence, f"DB (Fuzzy Series + Expanded)")
+                                        suggestions, referencia, confidence, f"DB (Fuzzy Series + Expanded)")
                                     print(
-                                        f"    Found in DB (Fuzzy Series + Expanded): {sku} (Freq: {frequency}, Conf: {confidence})")
+                                        f"    Found in DB (Fuzzy Series + Expanded): {referencia} (Freq: {frequency}, Conf: {confidence})")
 
                         # STEP 3: Removed fuzzy description matching - only use exact matches
                         # Fuzzy description matching removed to prevent wrong part suggestions
@@ -2624,8 +2624,8 @@ class FixacarApp:
                         print(f"    🔄 3-param fallback: Only exact description matches allowed...")
 
                         # Process exact matches only (no fuzzy description matching)
-                        for sku, db_desc, frequency in results:
-                            if sku and sku.strip() and db_desc:
+                        for referencia, db_desc, frequency in results:
+                            if referencia and referencia.strip() and db_desc:
                                 # Apply unified preprocessing to both descriptions for exact comparison
                                 preprocessed_original = self.unified_text_preprocessing(original_desc)
                                 preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
@@ -2635,18 +2635,18 @@ class FixacarApp:
                                 if preprocessed_original == preprocessed_db_desc:
                                     confidence = self.calculate_frequency_based_confidence(frequency, "DB (3-param Exact)")
                                     suggestions = self._aggregate_sku_suggestions(
-                                        suggestions, sku, confidence, f"DB (3-param Exact Orig)")
-                                    print(f"    ✅ Found in DB (3-param Exact Orig): {sku} (Freq: {frequency}, Conf: {confidence})")
+                                        suggestions, referencia, confidence, f"DB (3-param Exact Orig)")
+                                    print(f"    ✅ Found in DB (3-param Exact Orig): {referencia} (Freq: {frequency}, Conf: {confidence})")
                                 elif preprocessed_expanded == preprocessed_db_desc:
                                     confidence = self.calculate_frequency_based_confidence(frequency, "DB (3-param Exact)")
                                     suggestions = self._aggregate_sku_suggestions(
-                                        suggestions, sku, confidence, f"DB (3-param Exact Exp)")
-                                    print(f"    ✅ Found in DB (3-param Exact Exp): {sku} (Freq: {frequency}, Conf: {confidence})")
+                                        suggestions, referencia, confidence, f"DB (3-param Exact Exp)")
+                                    print(f"    ✅ Found in DB (3-param Exact Exp): {referencia} (Freq: {frequency}, Conf: {confidence})")
 
                         # STEP 2: If still no results, try fuzzy series + EXACT description only
                         if not suggestions:
                             print(
-                                f"  Final Fallback SQLite search (Fuzzy Series: maker, model, series LIKE '%{series}%')...")
+                                f"  Final Fallback SQLite search (Fuzzy series: maker, model, series LIKE '%{series}%')...")
                             cursor.execute("""
                                 SELECT referencia, normalized_descripcion, COUNT(*) as frequency
                                 FROM processed_consolidado
@@ -2663,8 +2663,8 @@ class FixacarApp:
                             preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
 
                             # Apply EXACT description matching only (no similarity threshold)
-                            for sku, db_desc, frequency in fuzzy_results:
-                                if sku and sku.strip() and db_desc:
+                            for referencia, db_desc, frequency in fuzzy_results:
+                                if referencia and referencia.strip() and db_desc:
                                     # Apply unified preprocessing to database description
                                     preprocessed_db_desc = self.unified_text_preprocessing(db_desc)
 
@@ -2672,15 +2672,15 @@ class FixacarApp:
                                     if preprocessed_original == preprocessed_db_desc:
                                         confidence = self.calculate_frequency_based_confidence(frequency, "DB (Fuzzy Series+Exact Desc)")
                                         suggestions = self._aggregate_sku_suggestions(
-                                            suggestions, sku, confidence, f"DB (Fuzzy Series+Exact Desc Orig)")
+                                            suggestions, referencia, confidence, f"DB (Fuzzy Series+Exact Desc Orig)")
                                         print(
-                                            f"    Found in DB (Fuzzy Series+Exact Desc Orig): {sku} (Freq: {frequency}, Conf: {confidence})")
+                                            f"    Found in DB (Fuzzy Series+Exact Desc Orig): {referencia} (Freq: {frequency}, Conf: {confidence})")
                                     elif preprocessed_expanded == preprocessed_db_desc:
                                         confidence = self.calculate_frequency_based_confidence(frequency, "DB (Fuzzy Series+Exact Desc)")
                                         suggestions = self._aggregate_sku_suggestions(
-                                            suggestions, sku, confidence, f"DB (Fuzzy Series+Exact Desc Exp)")
+                                            suggestions, referencia, confidence, f"DB (Fuzzy Series+Exact Desc Exp)")
                                         print(
-                                            f"    Found in DB (Fuzzy Series+Exact Desc Exp): {sku} (Freq: {frequency}, Conf: {confidence})")
+                                            f"    Found in DB (Fuzzy Series+Exact Desc Exp): {referencia} (Freq: {frequency}, Conf: {confidence})")
 
                     except Exception as db_err:
                         print(
@@ -2730,11 +2730,11 @@ class FixacarApp:
             ttk.Label(self.vehicle_details_frame, text=f"VIN: {vin}").pack(
                 anchor="w", padx=5, pady=2)
             ttk.Label(
-                self.vehicle_details_frame, text=f"Predicted Make: {self.vehicle_details.get('maker', 'N/A')}").pack(anchor="w", padx=5, pady=2)
+                self.vehicle_details_frame, text=f"Predicted maker: {self.vehicle_details.get('maker', 'N/A')}").pack(anchor="w", padx=5, pady=2)
             ttk.Label(
-                self.vehicle_details_frame, text=f"Predicted Year: {self.vehicle_details.get('model', 'N/A')}").pack(anchor="w", padx=5, pady=2)
+                self.vehicle_details_frame, text=f"Predicted model: {self.vehicle_details.get('model', 'N/A')}").pack(anchor="w", padx=5, pady=2)
             ttk.Label(
-                self.vehicle_details_frame, text=f"Predicted Series: {self.vehicle_details.get('Series', 'N/A')}").pack(anchor="w", padx=5, pady=2)
+                self.vehicle_details_frame, text=f"Predicted series: {self.vehicle_details.get('series', 'N/A')}").pack(anchor="w", padx=5, pady=2)
         else:
             ttk.Label(self.vehicle_details_frame,
                       text="Vehicle details could not be predicted.").pack(anchor="w", padx=5, pady=5)
@@ -2785,28 +2785,28 @@ class FixacarApp:
                     print(f"🎯 Display using enhanced processing: '{original_desc}' → '{processed_desc}' → '{display_desc}'")
 
                 # Get suggestions and apply source-specific limits
-                all_suggestions = [(sku, info) for sku, info in self.current_suggestions.get(original_desc, [])
-                                   if sku and sku.strip()]
+                all_suggestions = [(referencia, info) for referencia, info in self.current_suggestions.get(original_desc, [])
+                                   if referencia and referencia.strip()]
 
                 # Apply source-specific limits: Maestro=unlimited, NN=2, DB=2
                 maestro_suggestions = []
                 nn_suggestions = []
                 db_suggestions = []
 
-                for sku, info in all_suggestions:
+                for referencia, info in all_suggestions:
                     source = info.get('source', '')
                     if 'Maestro' in source:
-                        maestro_suggestions.append((sku, info))
+                        maestro_suggestions.append((referencia, info))
                     elif 'NN' in source or 'Neural' in source:
                         if len(nn_suggestions) < 2:  # Limit NN to 2 results
-                            nn_suggestions.append((sku, info))
+                            nn_suggestions.append((referencia, info))
                     elif 'DB' in source or 'Database' in source:
                         if len(db_suggestions) < 2:  # Limit DB to 2 results
-                            db_suggestions.append((sku, info))
+                            db_suggestions.append((referencia, info))
                     else:
                         # Handle other sources (fuzzy, etc.) - treat as DB for now
                         if len(db_suggestions) < 2:
-                            db_suggestions.append((sku, info))
+                            db_suggestions.append((referencia, info))
 
                 # Combine all limited suggestions and sort by confidence
                 suggestions_list = maestro_suggestions + nn_suggestions + db_suggestions
@@ -2916,7 +2916,7 @@ class FixacarApp:
                         fill='x', pady=5)
 
                     # Add radio buttons for each suggestion
-                    for sku, info in suggestions_list:
+                    for referencia, info in suggestions_list:
                         conf = info.get('confidence', 0)
                         source = info.get('source', '')
                         all_sources = info.get('all_sources', source)
@@ -2929,9 +2929,9 @@ class FixacarApp:
 
                         rb = ttk.Radiobutton(
                             part_frame,
-                            text=f"{sku} ({self._format_confidence_percentage(conf)}, {short_source})",
+                            text=f"{referencia} ({self._format_confidence_percentage(conf)}, {short_source})",
                             variable=self.selection_vars[original_desc],
-                            value=sku
+                            value=referencia
                         )
                         rb.pack(anchor="w", padx=5, pady=2)
 
@@ -3180,8 +3180,8 @@ class FixacarApp:
                             continue
 
                         is_manual = True
-                        for sku, _ in self.current_suggestions.get(original_desc, []):
-                            if sku == selected_sku:
+                        for referencia, _ in self.current_suggestions.get(original_desc, []):
+                            if referencia == selected_sku:
                                 is_manual = False
                                 break
                         source = "UserManualEntry" if is_manual else "UserConfirmed"
@@ -3232,19 +3232,19 @@ class FixacarApp:
                     break
             if not is_duplicate:
                 # Extract and convert year to integer
-                model_year = selection['vin_details'].get('model')
-                if isinstance(model_year, (list, tuple, np.ndarray)):
-                    model_year = model_year[0] if len(model_year) > 0 else None
-                if isinstance(model_year, str):
+                model = selection['vin_details'].get('model')
+                if isinstance(model, (list, tuple, np.ndarray)):
+                    model = model[0] if len(model) > 0 else None
+                if isinstance(model, str):
                     try:
-                        model_year = int(model_year)
+                        model = int(model)
                     except (ValueError, TypeError):
-                        model_year = None
+                        model = None
 
                 new_entry = {
                     'Maestro_ID': next_id,
                     'maker': selection['vin_details'].get('maker'),
-                    'model': model_year,
+                    'model': model,
                     'series': selection['vin_details'].get('series'),
                     'original_descripcion': selection['original_descripcion'],
                     'normalized_descripcion': selection['normalized_descripcion'],

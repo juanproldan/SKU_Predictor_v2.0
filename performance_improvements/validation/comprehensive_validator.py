@@ -101,7 +101,7 @@ class ComprehensiveValidator:
             year_field = next((f for f in year_fields if f in sample_record), None)
             sku_field = next((f for f in sku_fields if f in sample_record), None)
 
-            print(f"   🔍 Detected fields - Desc: {desc_field}, Make: {make_field}, Year: {year_field}, SKU: {sku_field}")
+            print(f"   🔍 Detected fields - Desc: {desc_field}, maker: {make_field}, model: {year_field}, referencia: {sku_field}")
 
             # Extract data using detected field names
             for record in test_records:
@@ -138,7 +138,7 @@ class ComprehensiveValidator:
         print(f"      Unique Years: {self.test_data['stats']['unique_years']}")
         print(f"      Unique SKUs: {self.test_data['stats']['unique_skus']}")
         print(f"      Avg Description Length: {self.test_data['stats']['avg_description_length']:.1f} words")
-        print(f"      Records with SKU: {self.test_data['stats']['records_with_sku']}")
+        print(f"      Records with referencia: {self.test_data['stats']['records_with_sku']}")
         
         return self.test_data
     
@@ -172,7 +172,7 @@ class ComprehensiveValidator:
             },
             {
                 'name': 'SKU Frequency Analysis',
-                'query': "SELECT referencia, COUNT(*) as freq FROM processed_consolidado WHERE sku IS NOT NULL GROUP BY referencia ORDER BY freq DESC LIMIT 10",
+                'query': "SELECT referencia, COUNT(*) as freq FROM processed_consolidado WHERE referencia IS NOT NULL GROUP BY referencia ORDER BY freq DESC LIMIT 10",
                 'expected_fast': False
             },
             {
@@ -370,7 +370,7 @@ class ComprehensiveValidator:
         
         # Try to import cache system
         try:
-            from performance_improvements.cache.sku_prediction_cache import get_cache
+            from performance_improvements.cache.referencia_prediction_cache import get_cache
             cache = get_cache()
             cache_available = True
             print(f"   ✅ Cache system available")
@@ -381,11 +381,11 @@ class ComprehensiveValidator:
         # Create test prediction patterns
         test_patterns = []
         for record in self.test_data['records'][:50]:  # Use first 50 records
-            if all(record.get(key) for key in ['maker', 'model', 'Series', 'descripcion']):
+            if all(record.get(key) for key in ['maker', 'model', 'series', 'descripcion']):
                 test_patterns.append({
                     'make': record['maker'],
                     'year': str(record['model']),
-                    'series': record['Series'],
+                    'series': record['series'],
                     'description': record['descripcion']
                 })
         
@@ -409,7 +409,7 @@ class ComprehensiveValidator:
             misses = 0
             
             for pattern in test_patterns:
-                cache_key = f"{pattern['make']}_{pattern['year']}_{pattern['series']}_{pattern['description']}"
+                cache_key = f'{maker}_{model}_{series}_{descripcion_hash}'']}"
                 
                 # Try to get from cache
                 start_time = time.time()
@@ -516,7 +516,7 @@ class ComprehensiveValidator:
                 # Extract prediction inputs
                 make = record.get('maker', '')
                 year = str(record.get('model', ''))
-                series = record.get('Series', '')
+                series = record.get('series', '')
                 description = record.get('descripcion', '')
                 expected_sku = record.get('referencia', '')
 
@@ -683,7 +683,7 @@ class ComprehensiveValidator:
             print(f"\n📈 DATA ANALYSIS:")
             print(f"   Total Records: {stats.get('total_records', 'N/A')}")
             print(f"   Unique Descriptions: {stats.get('unique_descriptions', 'N/A')}")
-            print(f"   Records with SKU: {stats.get('records_with_sku', 'N/A')}")
+            print(f"   Records with referencia: {stats.get('records_with_sku', 'N/A')}")
             print(f"   Avg Description Length: {stats.get('avg_description_length', 0):.1f} words")
 
         # Database Performance Summary

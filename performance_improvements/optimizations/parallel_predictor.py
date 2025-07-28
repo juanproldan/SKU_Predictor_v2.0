@@ -37,7 +37,7 @@ class ParallelSKUPredictor:
                         make: str, 
                         year: str, 
                         series: str, 
-                        description: str,
+                        descripcion: str,
                         maestro_func: Callable,
                         neural_network_func: Callable,
                         database_func: Callable,
@@ -87,7 +87,7 @@ class ParallelSKUPredictor:
             start_time, **kwargs
         )
     
-    def _try_early_maestro_check(self, make: str, year: str, series: str, description: str, 
+    def _try_early_maestro_check(self, make: str, year: str, series: str, descripcion: str, 
                                 maestro_func: Callable, **kwargs) -> Optional[Dict]:
         """
         Quick Maestro check for early termination
@@ -119,16 +119,16 @@ class ParallelSKUPredictor:
             return False
         
         # Look for any prediction with confidence >= 0.95
-        for sku, info in suggestions.items():
+        for referencia, info in suggestions.items():
             confidence = info.get('confidence', 0)
             if confidence >= 0.95:
-                print(f"    🎯 High confidence result found: {sku} ({confidence:.2f})")
+                print(f"    🎯 High confidence result found: {referencia} ({confidence:.2f})")
                 return True
         
         return False
     
     def _execute_parallel_prediction(self, 
-                                   make: str, year: str, series: str, description: str,
+                                   make: str, year: str, series: str, descripcion: str,
                                    maestro_func: Callable, neural_network_func: Callable,
                                    database_func: Callable, fuzzy_func: Callable,
                                    start_time: float, **kwargs) -> Dict:
@@ -193,7 +193,7 @@ class ParallelSKUPredictor:
             'source_results': results
         }
     
-    def _execute_with_timing(self, func: Callable, make: str, year: str, series: str, description: str, **kwargs) -> Tuple[Optional[Dict], float]:
+    def _execute_with_timing(self, func: Callable, make: str, year: str, series: str, descripcion: str, **kwargs) -> Tuple[Optional[Dict], float]:
         """Execute a prediction function with timing"""
         start_time = time.time()
         try:
@@ -219,15 +219,15 @@ class ParallelSKUPredictor:
             if source in results and results[source]:
                 source_suggestions = results[source].get('suggestions', {})
                 if isinstance(source_suggestions, dict):
-                    for sku, info in source_suggestions.items():
-                        if sku not in combined_suggestions:
-                            combined_suggestions[sku] = info
+                    for referencia, info in source_suggestions.items():
+                        if referencia not in combined_suggestions:
+                            combined_suggestions[referencia] = info
                         else:
                             # Handle duplicate SKUs - keep higher confidence
-                            existing_confidence = combined_suggestions[sku].get('confidence', 0)
+                            existing_confidence = combined_suggestions[referencia].get('confidence', 0)
                             new_confidence = info.get('confidence', 0)
                             if new_confidence > existing_confidence:
-                                combined_suggestions[sku] = info
+                                combined_suggestions[referencia] = info
         
         return combined_suggestions
     

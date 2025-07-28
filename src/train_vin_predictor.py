@@ -489,16 +489,16 @@ def train_and_save_models(df):
         X_train, X_test, y_train, y_test = train_test_split(
             X_year_encoded, y_year_encoded, test_size=0.2, random_state=42)
 
-        model_year = CategoricalNB(
+        model = CategoricalNB(
             min_categories=len(encoder_x_year.categories_[0]))
-        model_year.fit(X_train, y_train)
+        model.fit(X_train, y_train)
 
-        y_pred = model_year.predict(X_test)
+        y_pred = model.predict(X_test)
         accuracy = accuracy_score(y_test, y_pred)
         # Should be high if mapping is consistent
         print(f"Year Model Accuracy: {accuracy:.4f}")
 
-        joblib.dump(model_year, os.path.join(
+        joblib.dump(model, os.path.join(
             MODEL_OUTPUT_DIR, 'model_model.joblib'))
         joblib.dump(encoder_x_year, os.path.join(
             MODEL_OUTPUT_DIR, 'model_encoder_x.joblib'))
@@ -558,7 +558,7 @@ def train_and_save_models(df):
     train_pytorch_model(X_train, y_train, X_test, y_test,
                         input_size=X_train.shape[1],
                         num_classes=num_classes,
-                        model_name="Series")
+                        model_name="series")
 
 
 # --- Main Execution ---

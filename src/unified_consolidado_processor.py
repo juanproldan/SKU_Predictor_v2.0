@@ -166,7 +166,7 @@ def setup_database(db_path):
         
         # Create indexes for better query performance
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_vin_training ON processed_consolidado (vin_number, maker, model, series)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_sku_training ON processed_consolidado (maker, model, series, referencia)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_referencia_training ON processed_consolidado (maker, model, series, referencia)')
         
         conn.commit()
         logger.info("Database and 'processed_consolidado' table created/ensured.")
@@ -220,7 +220,7 @@ def process_consolidado_record(record, equivalencias_map):
     year = record.get('model')
     series = record.get('series')
     description = record.get('item_original_descripcion')
-    sku = record.get('item_referencia')
+    referencia = record.get('item_referencia')
 
     # Clean VIN if present (but don't discard record if invalid)
     cleaned_vin = clean_vin_for_training(vin) if vin else None
@@ -230,11 +230,11 @@ def process_consolidado_record(record, equivalencias_map):
     year = int(year) if year and str(year).isdigit() else None
     series = str(series).strip() if series else None
     description = str(description).strip() if description else None
-    sku = str(sku).strip() if sku and str(sku).strip() else None
+    referencia = str(referencia).strip() if referencia and str(referencia).strip() else None
 
     # Determine record usefulness
     good_for_vin_training = (cleaned_vin and make and year and series)
-    good_for_sku_training = (make and year and series and description and sku)
+    good_for_sku_training = (make and year and series and description and referencia)
 
     if not (good_for_vin_training or good_for_sku_training):
         return None  # Skip - not useful for either training purpose
@@ -259,7 +259,7 @@ def process_consolidado_record(record, equivalencias_map):
         'series': series,
         'original_descripcion': description,
         'normalized_descripcion': normalized_descripcion,
-        'referencia': sku
+        'referencia': referencia
     }
 
 def process_consolidado_to_db(conn, consolidado_path, equivalencias_map):
@@ -452,7 +452,7 @@ def main():
                 SELECT COUNT(*) FROM processed_consolidado
                 WHERE maker IS NOT NULL AND model IS NOT NULL
                 AND series IS NOT NULL AND normalized_descripcion IS NOT NULL
-                AND sku IS NOT NULL
+                AND referencia IS NOT NULL
             """)
             sku_training_ready = cursor.fetchone()[0]
 

@@ -104,9 +104,9 @@
 * **3.2 VIN Decoding & Vehicle Identification - ✅ IMPLEMENTED:**
     * ✅ **17-character VIN validation** with regex pattern matching
     * ✅ **VIN feature extraction** (WMI, Year Code, VDS)
-    * ✅ **Trained ML models** for maker, fabrication_year, and series prediction:
+    * ✅ **Trained ML models** for maker, model, and series prediction:
       - **maker Prediction**: Uses WMI (World Manufacturer Identifier)
-      - **fabrication_year Prediction**: Uses VIN year code with fallback decoding
+      - **model Prediction**: Uses VIN year code with fallback decoding
       - **series Prediction**: Uses WMI + VDS (Vehicle Descriptor Section)
     * ✅ **Error handling** for unknown VIN patterns with graceful fallbacks
 
@@ -170,7 +170,7 @@
       - Bracketed value correction ([2012] → 2012, ['Mazda'] → Mazda)
       - Data type validation and conversion
     * ✅ **Multi-Model Loading System**:
-      - **VIN Prediction Models**: Make, Year, Series (joblib format)
+      - **VIN Prediction Models**: maker, model, series (joblib format)
       - **SKU Neural Network**: Optimized PyTorch model with encoders
       - **Tokenizer**: Description text processing
     * ✅ **SQLite Database Connection** (`fixacar_history.db`):
@@ -186,7 +186,7 @@
       4. **Fuzzy Fallback**: Handle unrecognized terms
 
     * ✅ **PREDICTION SOURCE 1: Maestro Data (Confidence: 90-100%)**
-      - **4-Parameter Exact Matching**: maker + fabrication_year + series + descripcion
+      - **4-Parameter Exact Matching**: maker + model + series + descripcion
       - **Solo confidence**: 90% (0.9) - Expert validated but not perfect
       - **With NN consensus**: 100% (1.0) - Ultimate confidence, auto-selected
       - **Expert-validated entries** take highest priority
@@ -194,7 +194,7 @@
 
     * ✅ **PREDICTION SOURCE 2: Neural Network (Confidence: 70-85%)**
       - **PyTorch Optimized Model** with bidirectional LSTM + attention
-      - **4-Parameter Input**: maker + fabrication_year + series + descripcion
+      - **4-Parameter Input**: maker + model + series + descripcion
       - **Variable confidence**: Based on model prediction confidence scores
       - **Advanced architecture**: Embedding → LSTM → Attention → Dense layers
       - **Source**: AI-powered prediction for new combinations
@@ -203,7 +203,7 @@
       - **SQLite queries** on `fixacar_history.db`
       - **Frequency-based confidence**: High (80%) for 20+ exact matches, Low (40%) for few matches
       - **Quality-based scoring**: Penalties for outliers and fuzzy matches
-      - **Matching criteria**: maker + fabrication_year + Equivalencia_Row_ID
+      - **Matching criteria**: maker + model + Equivalencia_Row_ID
       - **Source**: Historical bid data
 
     * ✅ **PREDICTION SOURCE 4: Series Fuzzy Matching (Confidence: Variable)**
@@ -225,7 +225,7 @@
       - **Source attribution**: Users see prediction source
       - **Auto-selection**: 100% confidence predictions pre-selected
 * **3.7 Output Interface - ✅ IMPLEMENTED:**
-    * ✅ **Vehicle Details Display**: Shows predicted maker, fabrication_year, series from VIN
+    * ✅ **Vehicle Details Display**: Shows predicted maker, model, series from VIN
     * ✅ **Ranked SKU Suggestions**: Multiple suggestions per part descripcion
     * ✅ **Confidence & Source Visualization**:
       - Confidence scores (0-100%) clearly displayed
@@ -241,7 +241,7 @@
       - Tracks user confirmations and manual entries
     * ✅ **Maestro Database Updates**:
       - Adds new entries to in-memory Maestro structure
-      - **4-Parameter Storage**: maker, fabrication_year, series, descripcion
+      - **4-Parameter Storage**: maker, model, series, descripcion
       - Assigns confidence 1.0 and source "UserConfirmed"
       - Includes timestamp (Date_Added)
       - **Duplicate prevention** based on VIN details and normalized description
@@ -264,7 +264,7 @@
       - ✅ Populates `historical_parts` table with processed data
 
     * ✅ **VIN Prediction Model Training**:
-      - ✅ **train_vin_predictor.py**: Trains Make, Year, Series prediction models
+      - ✅ **train_vin_predictor.py**: Trains maker, model, series prediction models
       - ✅ Feature extraction from VIN components (WMI, Year Code, VDS)
       - ✅ Categorical Naive Bayes models with label encoding
       - ✅ Model persistence using joblib format
@@ -316,20 +316,20 @@
     * ✅ **`New_Data.db`**: Incremental data database
     * ✅ **`Processed_Data.db`**: Enhanced data with prediction columns
     * ✅ **Prediction Model Files**: Multiple trained models
-      - **VIN Models**: `vin_maker_model.joblib`, `vin_year_model.joblib`, `vin_series_model.joblib`
+      - **VIN Models**: `makerr_model.joblib`, `model_model.joblib`, `series_model.joblib`
       - **SKU Neural Network**: `sku_nn_model_pytorch_optimized.pth`
       - **Encoders**: Label encoders and tokenizers for data preprocessing
 
 * **4.2 In-Memory Data Structures - ✅ IMPLEMENTED:**
     * ✅ **Maestro Data Structure**: Complete mirror of `Maestro.xlsx`
-      - **Fields**: Maestro_ID, VIN_Make, VIN_Year_Min, VIN_Series_Trim, etc.
+      - **Fields**: Maestro_ID, maker, model_Min, series, etc.
       - **Standardized columns**: Removed deprecated VIN_Model, VIN_BodyStyle, Equivalencia_Row_ID
       - **Data types**: Proper integer/string handling with bracketed value correction
     * ✅ **Equivalencias Lookup Maps**: Dual mapping system
       - **equivalencias_map_global**: normalized_term → Equivalencia_Row_ID
       - **synonym_expansion_map_global**: synonym → equivalence_group_id
     * ✅ **Loaded Prediction Models**: Multiple models in memory
-      - **VIN Prediction Models**: Make, Year, Series predictors with encoders
+      - **VIN Prediction Models**: maker, model, series predictors with encoders
       - **SKU Neural Network**: PyTorch model with optimized architecture
       - **Tokenizer**: Text processing for neural network input
 * **4.3 File Schemas - ✅ IMPLEMENTED:**
@@ -346,17 +346,17 @@
         - **Priority**: Highest priority in text processing pipeline
 
     * ✅ **`Maestro.xlsx` Schema** (UPDATED - Standardized):
-      - **Core columns**: `Maestro_ID`, `VIN_Make`, `VIN_Year_Min`, `VIN_Year_Max`, `VIN_Series_Trim`
-      - **Description columns**: `Original_Description_Input`, `Normalized_Description_Input`
-      - **SKU columns**: `Confirmed_SKU`, `Confidence`, `Source`, `Date_Added`
+      - **Core columns**: `Maestro_ID`, `maker`, `model_Min`, `model_Max`, `series`
+      - **Description columns**: `original_descripcion`, `normalized_descripcion`
+      - **SKU columns**: `referencia`, `Confidence`, `Source`, `Date_Added`
       - **REMOVED deprecated columns**: `VIN_Model`, `VIN_BodyStyle`, `Equivalencia_Row_ID`
       - **Data types**: Integers saved as integers, proper type handling
 
     * ✅ **`fixacar_history.db` Schema** (`historical_parts` table):
       - **Primary key**: `id` (INTEGER PRIMARY KEY AUTOINCREMENT)
-      - **VIN fields**: `vin_number`, `vin_make`, `vin_model`, `vin_year`, `vin_series`, `vin_bodystyle`
-      - **Description fields**: `original_description`, `normalized_description`
-      - **SKU field**: `sku` (TEXT)
+      - **VIN fields**: `vin_number`, `maker`, `vin_model`, `model`, `series`, `vin_bodystyle`
+      - **Description fields**: `original_descripcion`, `normalized_descripcion`
+      - **SKU field**: `referencia` (TEXT)
       - **Linking field**: `Equivalencia_Row_ID` (INTEGER, nullable)
       - **Metadata**: `source_bid_id`, `date`
 
@@ -469,7 +469,7 @@
 
 ### ✅ **FULLY IMPLEMENTED FEATURES:**
 - **Multi-Source SKU Prediction System** (4 sources with confidence scoring)
-- **VIN Prediction Models** (Make, Year, Series extraction)
+- **VIN Prediction Models** (maker, model, series extraction)
 - **Global Synonym Expansion System** (Equivalencias preprocessing)
 - **Expert Learning Mechanism** (Maestro 4-parameter matching)
 - **🔄 Multi-SKU Maestro Support** (Many-to-many relationships, frequency-based ordering)
@@ -490,7 +490,7 @@
 - **Production-Ready ML Architecture**: Optimized bidirectional LSTM with attention mechanism
 - **Intelligent Preprocessing**: Global synonym expansion ensures consistency across all sources
 - **Multi-Model Integration**: Seamless combination of 4 different prediction approaches
-- **Data Standardization**: 4-parameter matching (Make, Year, Series, Description) across all sources
+- **Data Standardization**: 4-parameter matching (maker, model, series, Description) across all sources
 - **Performance Optimization**: Sub-second response times with comprehensive coverage
 - **Training Excellence**: 365K+ sample training with clean logs and professional output
 - **Code Quality**: Eliminated all warnings, proper indentation, production-ready structure
@@ -511,7 +511,7 @@
 
 #### **9.2 Automated Training Infrastructure:**
 - **✅ Fixacar_VIN_Trainer.exe**: Weekly VIN model updates
-  - **Purpose**: Process new VIN patterns and update Make/Year/Series models
+  - **Purpose**: Process new VIN patterns and update maker/model/series models
   - **Schedule**: Every Monday 2:00 AM via Windows Task Scheduler
   - **Data Source**: Updated VIN databases and user feedback
 
@@ -530,7 +530,7 @@
 ```
 WEEKLY AUTOMATION (Every Monday):
 ├── 10:00 PM: VIN_Trainer.exe
-│   ├── Updates VIN→Make/Year/Series models
+│   ├── Updates VIN→maker/model/series models
 │   ├── Processes new VIN patterns
 │   └── Duration: ~15-30 minutes
 │
@@ -650,7 +650,7 @@ MONTHLY AUTOMATION (First saturday):
 
 ### **🎯 Accuracy Enhancement Goals:**
 - **Target**: Achieve highest possible SKU prediction accuracy (current baseline: 55%)
-- **VIN Prediction**: Improve Make/Year/Series extraction accuracy through better data quality
+- **VIN Prediction**: Improve maker/model/series extraction accuracy through better data quality
 - **Confidence Scoring**: Refine confidence calculations for more reliable predictions
 - **Rare SKU Handling**: Specialized techniques for low-frequency parts prediction
 
