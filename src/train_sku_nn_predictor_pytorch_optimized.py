@@ -65,76 +65,76 @@ TRAINING_MODE = "full"  # Default to full training, can be overridden by command
 # --- Load VIN Predictor Models ---
 try:
     from train_vin_predictor import extract_vin_features_production
-    model_vin_maker = joblib.load(os.path.join(
-        VIN_MODEL_DIR, 'vin_maker_model.joblib'))
-    encoder_x_vin_maker = joblib.load(os.path.join(
-        VIN_MODEL_DIR, 'vin_maker_encoder_x.joblib'))
-    encoder_y_vin_maker = joblib.load(os.path.join(
-        VIN_MODEL_DIR, 'vin_maker_encoder_y.joblib'))
+    model_makerr = joblib.load(os.path.join(
+        VIN_MODEL_DIR, 'makerr_model.joblib'))
+    encoder_x_makerr = joblib.load(os.path.join(
+        VIN_MODEL_DIR, 'makerr_encoder_x.joblib'))
+    encoder_y_makerr = joblib.load(os.path.join(
+        VIN_MODEL_DIR, 'makerr_encoder_y.joblib'))
 
-    model_vin_year = joblib.load(os.path.join(
-        VIN_MODEL_DIR, 'vin_year_model.joblib'))
-    encoder_x_vin_year = joblib.load(os.path.join(
-        VIN_MODEL_DIR, 'vin_year_encoder_x.joblib'))
-    encoder_y_vin_year = joblib.load(os.path.join(
-        VIN_MODEL_DIR, 'vin_year_encoder_y.joblib'))
+    model_fabrication_year = joblib.load(os.path.join(
+        VIN_MODEL_DIR, 'fabrication_year_model.joblib'))
+    encoder_x_fabrication_year = joblib.load(os.path.join(
+        VIN_MODEL_DIR, 'fabrication_year_encoder_x.joblib'))
+    encoder_y_fabrication_year = joblib.load(os.path.join(
+        VIN_MODEL_DIR, 'fabrication_year_encoder_y.joblib'))
 
-    model_vin_series = joblib.load(os.path.join(
-        VIN_MODEL_DIR, 'vin_series_model.joblib'))
-    encoder_x_vin_series = joblib.load(os.path.join(
-        VIN_MODEL_DIR, 'vin_series_encoder_x.joblib'))
-    encoder_y_vin_series = joblib.load(os.path.join(
-        VIN_MODEL_DIR, 'vin_series_encoder_y.joblib'))
+    model_series = joblib.load(os.path.join(
+        VIN_MODEL_DIR, 'series_model.joblib'))
+    encoder_x_series = joblib.load(os.path.join(
+        VIN_MODEL_DIR, 'series_encoder_x.joblib'))
+    encoder_y_series = joblib.load(os.path.join(
+        VIN_MODEL_DIR, 'series_encoder_y.joblib'))
     print("VIN detail prediction models loaded successfully.")
 except Exception as e:
     print(
         f"Error loading VIN detail prediction models: {e}. This script cannot proceed without them.")
-    model_vin_maker = None  # Ensure it's None so script can exit if needed
+    model_makerr = None  # Ensure it's None so script can exit if needed
 
 
 def predict_vin_details_batch(vins):
     """Process VIN predictions in batches for better performance."""
-    if not model_vin_maker or not model_vin_year or not model_vin_series:
-        return [{"Make": "N/A", "Model Year": "N/A", "Series": "N/A"} for _ in vins]
+    if not model_makerr or not model_fabrication_year or not model_series:
+        return [{"maker": "N/A", "fabrication_year": "N/A", "series": "N/A"} for _ in vins]
 
     results = []
     for vin in vins:
         features = extract_vin_features_production(vin)
         if not features:
             results.append(
-                {"Make": "N/A", "Model Year": "N/A", "Series": "N/A"})
+                {"maker": "N/A", "fabrication_year": "N/A", "series": "N/A"})
             continue
 
-        details = {"Make": "N/A", "Model Year": "N/A", "Series": "N/A"}
+        details = {"maker": "N/A", "fabrication_year": "N/A", "series": "N/A"}
         try:
             # Predict Make - Use DataFrame with proper column names
             import pandas as pd
             wmi_df = pd.DataFrame([[features['wmi']]], columns=['wmi'])
-            wmi_encoded = encoder_x_vin_maker.transform(wmi_df)
+            wmi_encoded = encoder_x_makerr.transform(wmi_df)
             if -1 not in wmi_encoded:
-                pred_encoded = model_vin_maker.predict(wmi_encoded)
+                pred_encoded = model_makerr.predict(wmi_encoded)
                 if pred_encoded[0] != -1:
-                    details['Make'] = encoder_y_vin_maker.inverse_transform(
+                    details['maker'] = encoder_y_makerr.inverse_transform(
                         pred_encoded.reshape(-1, 1))[0]
 
             # Predict Model Year - Use DataFrame with proper column names
             year_df = pd.DataFrame([[features['year_code']]], columns=['year_code'])
-            year_code_encoded = encoder_x_vin_year.transform(year_df)
+            year_code_encoded = encoder_x_fabrication_year.transform(year_df)
             if -1 not in year_code_encoded:
-                pred_encoded = model_vin_year.predict(year_code_encoded)
+                pred_encoded = model_fabrication_year.predict(year_code_encoded)
                 if pred_encoded[0] != -1:
-                    details['Model Year'] = encoder_y_vin_year.inverse_transform(
+                    details['fabrication_year'] = encoder_y_fabrication_year.inverse_transform(
                         pred_encoded.reshape(-1, 1))[0]
 
             # Predict Series - Use DataFrame with proper column names
             series_df = pd.DataFrame([[features['wmi'], features['vds_full']]],
                                    columns=['wmi', 'vds_full'])
-            series_features_encoded = encoder_x_vin_series.transform(series_df)
+            series_features_encoded = encoder_x_series.transform(series_df)
             if -1 not in series_features_encoded[0]:
-                pred_encoded = model_vin_series.predict(
+                pred_encoded = model_series.predict(
                     series_features_encoded)
                 if pred_encoded[0] != -1:
-                    details['Series'] = encoder_y_vin_series.inverse_transform(
+                    details['series'] = encoder_y_series.inverse_transform(
                         pred_encoded.reshape(-1, 1))[0]
         except Exception as e:
             print(f"Warning: Error predicting details for VIN {vin}: {e}")
@@ -152,7 +152,7 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
         incremental_mode (bool): If True, only load recent data for incremental training
         days_back (int): Number of days back to load for incremental training
     """
-    if not model_vin_maker:  # Check if VIN models loaded
+    if not model_makerr:  # Check if VIN models loaded
         print("VIN detail prediction models are not available. Cannot preprocess data.")
         return None
 
@@ -174,7 +174,7 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
         recent_limit = max(1000, int(total_count * 0.02))  # At least 1000 records
 
         query = f"""
-        SELECT vin_number, normalized_description, sku
+        SELECT vin_number, normalized_descripcion, sku
         FROM processed_consolidado
         WHERE sku IS NOT NULL
         ORDER BY ROWID DESC
@@ -187,9 +187,9 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
 
         # Optionally limit the data size for faster testing
         if SAMPLE_SIZE:
-            query = f"SELECT vin_number, normalized_description, sku FROM processed_consolidado WHERE sku IS NOT NULL LIMIT {SAMPLE_SIZE}"
+            query = f"SELECT vin_number, normalized_descripcion, sku FROM processed_consolidado WHERE sku IS NOT NULL LIMIT {SAMPLE_SIZE}"
         else:
-            query = "SELECT vin_number, normalized_description, sku FROM processed_consolidado WHERE sku IS NOT NULL"
+            query = "SELECT vin_number, normalized_descripcion, sku FROM processed_consolidado WHERE sku IS NOT NULL"
 
     if not os.path.exists(DB_PATH):
         print(f"Error: Database file not found at {DB_PATH}")
@@ -286,10 +286,10 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
                    df_vin_details.reset_index(drop=True)], axis=1)
 
     # Clean data
-    df.dropna(subset=['Make', 'Model Year', 'Series',
-              'normalized_description', 'sku'], inplace=True)
-    df = df[(df['Make'] != 'N/A') & (df['Model Year']
-                                     != 'N/A') & (df['Series'] != 'N/A')]
+    df.dropna(subset=['maker', 'fabrication_year', 'series',
+              'normalized_descripcion', 'referencia'], inplace=True)
+    df = df[(df['maker'] != 'N/A') & (df['fabrication_year']
+                                     != 'N/A') & (df['series'] != 'N/A')]
     print(f"Records after VIN prediction and NA drop: {len(df)}")
 
     if df.empty:
@@ -297,9 +297,9 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
         return None
 
     # Filter rare SKUs
-    sku_counts = df['sku'].value_counts()
+    sku_counts = df['referencia'].value_counts()
     common_skus = sku_counts[sku_counts >= MIN_SKU_FREQUENCY].index
-    df = df[df['sku'].isin(common_skus)]
+    df = df[df['referencia'].isin(common_skus)]
     print(
         f"Records after filtering rare SKUs (min_freq={MIN_SKU_FREQUENCY}): {len(df)}")
 
@@ -308,7 +308,7 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
         return None
 
     # Encode categorical features
-    categorical_features = ['Make', 'Model Year', 'Series']
+    categorical_features = ['maker', 'fabrication_year', 'series']
     encoders = {}
     for col in categorical_features:
         le = LabelEncoder()
@@ -317,10 +317,10 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
         print(f"Encoded '{col}', found {len(le.classes_)} unique values.")
 
     sku_encoder = LabelEncoder()
-    df['sku_encoded'] = sku_encoder.fit_transform(df['sku'])
-    encoders['sku'] = sku_encoder
+    df['referencia_encoded'] = sku_encoder.fit_transform(df['referencia'])
+    encoders['referencia'] = sku_encoder
     num_classes = len(sku_encoder.classes_)
-    print(f"Encoded 'sku', found {num_classes} unique SKUs (classes).")
+    print(f"Encoded 'referencia', found {num_classes} unique SKUs (classes).")
 
     # Save encoders
     os.makedirs(SKU_NN_MODEL_DIR, exist_ok=True)
@@ -329,10 +329,10 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
             SKU_NN_MODEL_DIR, f'encoder_{name}.joblib'))
 
     # Tokenize and pad text descriptions
-    print("Tokenizing and padding 'normalized_description'...")
+    print("Tokenizing and padding 'normalized_descripcion'...")
     # Note: descriptions are already normalized in the database by offline_data_processor.py
     # which uses normalize_text() with case-insensitive processing and linguistic variations
-    descriptions = df['normalized_description'].astype(str).tolist()
+    descriptions = df['normalized_descripcion'].astype(str).tolist()
 
     # Additional normalization to ensure consistency (case-insensitive, synonyms, etc.)
     descriptions = [normalize_text(desc, expand_linguistic_variations=True) for desc in descriptions]
@@ -367,7 +367,7 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
     # Prepare features
     X_cat = df[[col + '_encoded' for col in categorical_features]].values
     X_text = padded_sequences
-    y_encoded = df['sku_encoded'].values
+    y_encoded = df['referencia_encoded'].values
 
     print(
         f"Data preprocessing completed in {time.time() - start_time:.2f} seconds.")
@@ -480,7 +480,7 @@ if __name__ == "__main__":
     TRAINING_MODE = args.mode
     incremental_mode = (TRAINING_MODE == 'incremental')
 
-    if not model_vin_maker:  # Critical dependency check
+    if not model_makerr:  # Critical dependency check
         print("Exiting: VIN detail prediction models failed to load.")
     else:
         mode_text = "Incremental" if incremental_mode else "Full"

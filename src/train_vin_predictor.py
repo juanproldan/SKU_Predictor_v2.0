@@ -36,7 +36,7 @@ def validate_vin_check_digit(vin_str):
     """
     Validate VIN check digit (position 9) using the standard algorithm.
     This is optional validation - some VINs may have incorrect check digits
-    but still be valid for Make/Year/Series extraction.
+    but still be valid for maker/fabrication_year/series extraction.
     """
     # VIN character values for check digit calculation
     char_values = {
@@ -112,7 +112,7 @@ def clean_vin_for_training(vin):
         return None
 
     # Optional: Validate check digit (commented out as it may be too strict)
-    # Many VINs in databases have incorrect check digits but valid Make/Year/Series
+    # Many VINs in databases have incorrect check digits but valid maker/fabrication_year/series
     # Uncomment the next 3 lines for stricter validation:
     # if not validate_vin_check_digit(vin_str):
     #     return None
@@ -223,12 +223,12 @@ def load_and_prepare_data():
 
         # Query the database for relevant data
         query = """
-        SELECT vin_number, vin_make as maker, vin_year as fabrication_year, vin_series as series
+        SELECT vin_number, maker as maker, fabrication_year as fabrication_year, series as series
         FROM processed_consolidado
         WHERE vin_number IS NOT NULL
-          AND vin_make IS NOT NULL
-          AND vin_year IS NOT NULL
-          AND vin_series IS NOT NULL
+          AND maker IS NOT NULL
+          AND fabrication_year IS NOT NULL
+          AND series IS NOT NULL
         """
 
         df_raw = pd.read_sql_query(query, conn)
@@ -288,7 +288,7 @@ def load_and_prepare_data():
                     'maker': row['maker'],
                     'series': row['series'],
                     # Target year as string
-                    'year': str(year_target)
+                    'fabrication_year': str(year_target)
                 })
             else:
                 # This catches additional filtering from extract_vin_features
@@ -449,11 +449,11 @@ def train_and_save_models(df):
 
     # Save model and encoders
     joblib.dump(model_maker, os.path.join(
-        MODEL_OUTPUT_DIR, 'vin_maker_model.joblib'))
+        MODEL_OUTPUT_DIR, 'makerr_model.joblib'))
     joblib.dump(encoder_x_maker, os.path.join(
-        MODEL_OUTPUT_DIR, 'vin_maker_encoder_x.joblib'))
+        MODEL_OUTPUT_DIR, 'makerr_encoder_x.joblib'))
     joblib.dump(encoder_y_maker, os.path.join(
-        MODEL_OUTPUT_DIR, 'vin_maker_encoder_y.joblib'))
+        MODEL_OUTPUT_DIR, 'makerr_encoder_y.joblib'))
     print("Maker model and encoders saved.")
 
     # Train PyTorch model for Maker
@@ -499,11 +499,11 @@ def train_and_save_models(df):
         print(f"Year Model Accuracy: {accuracy:.4f}")
 
         joblib.dump(model_year, os.path.join(
-            MODEL_OUTPUT_DIR, 'vin_year_model.joblib'))
+            MODEL_OUTPUT_DIR, 'fabrication_year_model.joblib'))
         joblib.dump(encoder_x_year, os.path.join(
-            MODEL_OUTPUT_DIR, 'vin_year_encoder_x.joblib'))
+            MODEL_OUTPUT_DIR, 'fabrication_year_encoder_x.joblib'))
         joblib.dump(encoder_y_year, os.path.join(
-            MODEL_OUTPUT_DIR, 'vin_year_encoder_y.joblib'))
+            MODEL_OUTPUT_DIR, 'fabrication_year_encoder_y.joblib'))
         print("Year model and encoders saved.")
 
         # Train PyTorch model for Year
@@ -512,7 +512,7 @@ def train_and_save_models(df):
         train_pytorch_model(X_train, y_train, X_test, y_test,
                             input_size=X_train.shape[1],
                             num_classes=num_classes,
-                            model_name="Year")
+                            model_name="fabrication_year")
 
     # --- 3. Series Prediction (using WMI + VDS) ---
     # This is the most complex and likely least accurate part
@@ -545,11 +545,11 @@ def train_and_save_models(df):
     print(f"Series Model Accuracy: {accuracy:.4f}")
 
     joblib.dump(model_series, os.path.join(
-        MODEL_OUTPUT_DIR, 'vin_series_model.joblib'))
+        MODEL_OUTPUT_DIR, 'series_model.joblib'))
     joblib.dump(encoder_x_series, os.path.join(
-        MODEL_OUTPUT_DIR, 'vin_series_encoder_x.joblib'))
+        MODEL_OUTPUT_DIR, 'series_encoder_x.joblib'))
     joblib.dump(encoder_y_series, os.path.join(
-        MODEL_OUTPUT_DIR, 'vin_series_encoder_y.joblib'))
+        MODEL_OUTPUT_DIR, 'series_encoder_y.joblib'))
     print("Series model and encoders saved.")
 
     # Train PyTorch model for Series

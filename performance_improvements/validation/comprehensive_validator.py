@@ -90,10 +90,10 @@ class ComprehensiveValidator:
             print(f"   🔍 Sample record keys: {list(sample_record.keys())}")
 
             # Try different possible field names
-            desc_fields = ['Description', 'description', 'desc', 'Descripcion', 'descripcion']
-            make_fields = ['Make', 'make', 'marca', 'Marca']
-            year_fields = ['Year', 'year', 'ano', 'Ano', 'anio', 'Anio']
-            sku_fields = ['SKU', 'sku', 'codigo', 'Codigo']
+            desc_fields = ['descripcion', 'description', 'desc', 'Descripcion', 'descripcion']
+            make_fields = ['maker', 'make', 'marca', 'Marca']
+            year_fields = ['fabrication_year', 'year', 'ano', 'Ano', 'anio', 'Anio']
+            sku_fields = ['referencia', 'referencia', 'codigo', 'Codigo']
 
             # Find the correct field names
             desc_field = next((f for f in desc_fields if f in sample_record), None)
@@ -127,7 +127,7 @@ class ComprehensiveValidator:
                 'unique_years': len(set(years)),
                 'unique_skus': len(set(skus)),
                 'avg_description_length': np.mean([len(desc.split()) for desc in descriptions if desc]),
-                'records_with_sku': len([r for r in test_records if r.get('SKU')])
+                'records_with_sku': len([r for r in test_records if r.get('referencia')])
             }
         }
         
@@ -162,32 +162,32 @@ class ComprehensiveValidator:
             },
             {
                 'name': 'Make Filter (Toyota)',
-                'query': "SELECT COUNT(*) FROM processed_consolidado WHERE vin_make = 'TOYOTA'",
+                'query': "SELECT COUNT(*) FROM processed_consolidado WHERE maker = 'TOYOTA'",
                 'expected_fast': True
             },
             {
                 'name': 'Make+Year Filter',
-                'query': "SELECT COUNT(*) FROM processed_consolidado WHERE vin_make = 'TOYOTA' AND vin_year = '2020'",
+                'query': "SELECT COUNT(*) FROM processed_consolidado WHERE maker = 'TOYOTA' AND fabrication_year = '2020'",
                 'expected_fast': True
             },
             {
                 'name': 'SKU Frequency Analysis',
-                'query': "SELECT sku, COUNT(*) as freq FROM processed_consolidado WHERE sku IS NOT NULL GROUP BY sku ORDER BY freq DESC LIMIT 10",
+                'query': "SELECT referencia, COUNT(*) as freq FROM processed_consolidado WHERE sku IS NOT NULL GROUP BY referencia ORDER BY freq DESC LIMIT 10",
                 'expected_fast': False
             },
             {
                 'name': 'Description Search',
-                'query': "SELECT * FROM processed_consolidado WHERE normalized_description LIKE '%parachoques%' LIMIT 10",
+                'query': "SELECT * FROM processed_consolidado WHERE normalized_descripcion LIKE '%parachoques%' LIMIT 10",
                 'expected_fast': False
             },
             {
                 'name': 'Complex Prediction Pattern',
                 'query': """
-                    SELECT sku, COUNT(*) as frequency 
+                    SELECT referencia, COUNT(*) as frequency 
                     FROM processed_consolidado 
-                    WHERE vin_make = 'TOYOTA' AND vin_year = '2020' 
-                    AND normalized_description LIKE '%parachoques%'
-                    GROUP BY sku ORDER BY frequency DESC LIMIT 5
+                    WHERE maker = 'TOYOTA' AND fabrication_year = '2020' 
+                    AND normalized_descripcion LIKE '%parachoques%'
+                    GROUP BY referencia ORDER BY frequency DESC LIMIT 5
                 """,
                 'expected_fast': True
             }
@@ -381,12 +381,12 @@ class ComprehensiveValidator:
         # Create test prediction patterns
         test_patterns = []
         for record in self.test_data['records'][:50]:  # Use first 50 records
-            if all(record.get(key) for key in ['Make', 'Year', 'Series', 'Description']):
+            if all(record.get(key) for key in ['maker', 'fabrication_year', 'Series', 'descripcion']):
                 test_patterns.append({
-                    'make': record['Make'],
-                    'year': str(record['Year']),
+                    'make': record['maker'],
+                    'year': str(record['fabrication_year']),
                     'series': record['Series'],
-                    'description': record['Description']
+                    'description': record['descripcion']
                 })
         
         print(f"   🎯 Testing with {len(test_patterns)} prediction patterns")
@@ -421,7 +421,7 @@ class ComprehensiveValidator:
                 else:
                     misses += 1
                     # Simulate prediction result and cache it
-                    fake_result = {'sku': 'TEST_SKU', 'confidence': 0.8}
+                    fake_result = {'referencia': 'TEST_SKU', 'confidence': 0.8}
                     if hasattr(cache, 'set'):
                         cache.set(cache_key, fake_result)
             
@@ -469,7 +469,7 @@ class ComprehensiveValidator:
             raise ValueError("Test data not loaded. Call load_real_data() first.")
 
         # Get records with known SKUs for accuracy testing
-        records_with_sku = [r for r in self.test_data['records'] if r.get('SKU')]
+        records_with_sku = [r for r in self.test_data['records'] if r.get('referencia')]
         if len(records_with_sku) < sample_size:
             test_records = records_with_sku
         else:
@@ -514,11 +514,11 @@ class ComprehensiveValidator:
 
             try:
                 # Extract prediction inputs
-                make = record.get('Make', '')
-                year = str(record.get('Year', ''))
+                make = record.get('maker', '')
+                year = str(record.get('fabrication_year', ''))
                 series = record.get('Series', '')
-                description = record.get('Description', '')
-                expected_sku = record.get('SKU', '')
+                description = record.get('descripcion', '')
+                expected_sku = record.get('referencia', '')
 
                 if not all([make, year, series, description]):
                     continue
@@ -539,7 +539,7 @@ class ComprehensiveValidator:
                     # Assuming prediction_result is a list of predictions
                     best_prediction = prediction_result[0]
                     if isinstance(best_prediction, dict):
-                        predicted_sku = best_prediction.get('sku', '')
+                        predicted_sku = best_prediction.get('referencia', '')
                         confidence = best_prediction.get('confidence', 0.0)
                     elif isinstance(best_prediction, tuple):
                         predicted_sku = best_prediction[0] if len(best_prediction) > 0 else ''

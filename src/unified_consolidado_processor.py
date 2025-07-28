@@ -93,7 +93,7 @@ def validate_vin_check_digit(vin_str):
     """
     Validate VIN check digit (position 9) using the standard algorithm.
     This is optional validation - some VINs may have incorrect check digits
-    but still be valid for Make/Year/Series extraction.
+    but still be valid for maker/fabrication_year/series extraction.
     """
     # VIN character values for check digit calculation
     char_values = {
@@ -154,19 +154,19 @@ def setup_database(db_path):
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS processed_consolidado (
             vin_number TEXT,                    -- Cleaned VINs for VIN training (may be NULL)
-            vin_make TEXT,                      -- For both VIN & SKU training
-            vin_year INTEGER,                   -- For both VIN & SKU training
-            vin_series TEXT,                    -- For both VIN & SKU training
-            original_description TEXT,          -- For SKU training (may be NULL)
-            normalized_description TEXT,        -- For SKU training, processed (may be NULL)
-            sku TEXT,                          -- For SKU training (may be NULL)
-            UNIQUE(vin_number, original_description, sku) -- Prevent duplicates
+            maker TEXT,                         -- For both VIN & SKU training
+            fabrication_year INTEGER,          -- For both VIN & SKU training
+            series TEXT,                        -- For both VIN & SKU training
+            original_descripcion TEXT,          -- For SKU training (may be NULL)
+            normalized_descripcion TEXT,        -- For SKU training, processed (may be NULL)
+            referencia TEXT,                    -- For SKU training (may be NULL)
+            UNIQUE(vin_number, original_descripcion, referencia) -- Prevent duplicates
         )
         ''')
         
         # Create indexes for better query performance
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_vin_training ON processed_consolidado (vin_number, vin_make, vin_year, vin_series)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_sku_training ON processed_consolidado (vin_make, vin_year, vin_series, sku)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_vin_training ON processed_consolidado (vin_number, maker, fabrication_year, series)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_sku_training ON processed_consolidado (maker, fabrication_year, series, referencia)')
         
         conn.commit()
         logger.info("Database and 'processed_consolidado' table created/ensured.")
@@ -216,11 +216,11 @@ def process_consolidado_record(record, equivalencias_map):
     """
     # Extract required fields only (removed unused columns)
     vin = record.get('vin_number')
-    make = record.get('vin_make')
-    year = record.get('vin_year')
-    series = record.get('vin_series')
-    description = record.get('item_original_description')
-    sku = record.get('item_sku')
+    make = record.get('maker')
+    year = record.get('fabrication_year')
+    series = record.get('series')
+    description = record.get('item_original_descripcion')
+    sku = record.get('item_referencia')
 
     # Clean VIN if present (but don't discard record if invalid)
     cleaned_vin = clean_vin_for_training(vin) if vin else None
@@ -240,26 +240,26 @@ def process_consolidado_record(record, equivalencias_map):
         return None  # Skip - not useful for either training purpose
 
     # Process description if present
-    normalized_description = None
+    normalized_descripcion = None
     equivalencia_row_id = None
 
     if description:
         try:
-            normalized_description = normalize_text(description, equivalencias_map)
+            normalized_descripcion = normalize_text(description, equivalencias_map)
             # For now, set equivalencia_row_id to None - could be enhanced later
             equivalencia_row_id = None
         except Exception as e:
             logging.getLogger(__name__).warning(f"Error normalizing description '{description}': {e}")
-            normalized_description = description  # Use original if normalization fails
+            normalized_descripcion = description  # Use original if normalization fails
 
     return {
         'vin_number': cleaned_vin,
-        'vin_make': make,
-        'vin_year': year,
-        'vin_series': series,
-        'original_description': description,
-        'normalized_description': normalized_description,
-        'sku': sku
+        'maker': make,
+        'fabrication_year': year,
+        'series': series,
+        'original_descripcion': description,
+        'normalized_descripcion': normalized_descripcion,
+        'referencia': sku
     }
 
 def process_consolidado_to_db(conn, consolidado_path, equivalencias_map):
@@ -306,20 +306,20 @@ def process_consolidado_to_db(conn, consolidado_path, equivalencias_map):
 
             # Extract VIN info from record level (simplified - removed unused fields)
             vin_number = record.get('vin_number')
-            vin_make = record.get('maker')  # Field is 'maker' not 'vin_make'
-            vin_year = record.get('fabrication_year')  # Field is 'fabrication_year' not 'vin_year'
-            vin_series = record.get('series')  # Field is 'series' not 'vin_series'
+            maker = record.get('maker')  # Field is 'maker'
+            fabrication_year = record.get('fabrication_year')  # Field is 'fabrication_year'
+            series = record.get('series')  # Field is 'series'
 
             # Process each item in the record
             for item in items:
                 # Combine record-level and item-level data (simplified schema)
                 combined_record = {
                     'vin_number': vin_number,
-                    'vin_make': vin_make,
-                    'vin_year': vin_year,
-                    'vin_series': vin_series,
-                    'item_original_description': item.get('descripcion'),  # Field is 'descripcion'
-                    'item_sku': item.get('referencia')  # Field is 'referencia'
+                    'maker': maker,
+                    'fabrication_year': fabrication_year,
+                    'series': series,
+                    'item_original_descripcion': item.get('descripcion'),  # Field is 'descripcion'
+                    'item_referencia': item.get('referencia')  # Field is 'referencia'
                 }
 
                 # Process the combined record
@@ -331,15 +331,15 @@ def process_consolidado_to_db(conn, consolidado_path, equivalencias_map):
 
                 # Determine training usefulness for statistics
                 has_vin_data = (processed_record['vin_number'] and
-                               processed_record['vin_make'] and
-                               processed_record['vin_year'] and
-                               processed_record['vin_series'])
+                               processed_record['maker'] and
+                               processed_record['fabrication_year'] and
+                               processed_record['series'])
 
-                has_sku_data = (processed_record['vin_make'] and
-                               processed_record['vin_year'] and
-                               processed_record['vin_series'] and
-                               processed_record['normalized_description'] and
-                               processed_record['sku'])
+                has_sku_data = (processed_record['maker'] and
+                               processed_record['fabrication_year'] and
+                               processed_record['series'] and
+                               processed_record['normalized_descripcion'] and
+                               processed_record['referencia'])
 
                 if has_vin_data and has_sku_data:
                     stats['both_training_records'] += 1
@@ -352,17 +352,17 @@ def process_consolidado_to_db(conn, consolidado_path, equivalencias_map):
                 try:
                     cursor.execute('''
                     INSERT INTO processed_consolidado (
-                        vin_number, vin_make, vin_year, vin_series,
-                        original_description, normalized_description, sku
+                        vin_number, maker, fabrication_year, series,
+                        original_descripcion, normalized_descripcion, referencia
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         processed_record['vin_number'],
-                        processed_record['vin_make'],
-                        processed_record['vin_year'],
-                        processed_record['vin_series'],
-                        processed_record['original_description'],
-                        processed_record['normalized_description'],
-                        processed_record['sku']
+                        processed_record['maker'],
+                        processed_record['fabrication_year'],
+                        processed_record['series'],
+                        processed_record['original_descripcion'],
+                        processed_record['normalized_descripcion'],
+                        processed_record['referencia']
                     ))
                     stats['inserted_records'] += 1
 
@@ -443,15 +443,15 @@ def main():
 
             cursor.execute("""
                 SELECT COUNT(*) FROM processed_consolidado
-                WHERE vin_number IS NOT NULL AND vin_make IS NOT NULL
-                AND vin_year IS NOT NULL AND vin_series IS NOT NULL
+                WHERE vin_number IS NOT NULL AND maker IS NOT NULL
+                AND fabrication_year IS NOT NULL AND series IS NOT NULL
             """)
             vin_training_ready = cursor.fetchone()[0]
 
             cursor.execute("""
                 SELECT COUNT(*) FROM processed_consolidado
-                WHERE vin_make IS NOT NULL AND vin_year IS NOT NULL
-                AND vin_series IS NOT NULL AND normalized_description IS NOT NULL
+                WHERE maker IS NOT NULL AND fabrication_year IS NOT NULL
+                AND series IS NOT NULL AND normalized_descripcion IS NOT NULL
                 AND sku IS NOT NULL
             """)
             sku_training_ready = cursor.fetchone()[0]

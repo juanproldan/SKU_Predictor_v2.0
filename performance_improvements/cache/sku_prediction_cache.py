@@ -3,7 +3,7 @@
 
 """
 Smart SKU Prediction Cache System
-Implements multi-level caching for Make/Year/Series + Description combinations
+Implements multi-level caching for maker/fabrication_year/series + Description combinations
 
 Author: Augment Agent
 Date: 2025-07-25
@@ -20,7 +20,7 @@ from datetime import datetime
 
 class SKUPredictionCache:
     """
-    Multi-level caching system for SKU predictions based on Make/Year/Series + Description
+    Multi-level caching system for SKU predictions based on maker/fabrication_year/series + Description
     
     Level 1: In-memory cache for current session (fastest)
     Level 2: SQLite persistent cache for cross-session storage
@@ -53,10 +53,10 @@ class SKUPredictionCache:
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS prediction_cache (
             cache_key TEXT PRIMARY KEY,
-            make TEXT NOT NULL,
-            year TEXT NOT NULL,
+            maker TEXT NOT NULL,
+            fabrication_year TEXT NOT NULL,
             series TEXT NOT NULL,
-            description TEXT NOT NULL,
+            descripcion TEXT NOT NULL,
             predictions TEXT NOT NULL,  -- JSON string of predictions
             confidence_scores TEXT NOT NULL,  -- JSON string of confidence scores
             sources TEXT NOT NULL,  -- JSON string of sources
@@ -85,7 +85,7 @@ class SKUPredictionCache:
     def _generate_cache_key(self, make: str, year: str, series: str, description: str) -> str:
         """
         Generate unique cache key for prediction inputs
-        Uses Make/Year/Series + normalized description for optimal hit rate
+        Uses maker/fabrication_year/series + normalized description for optimal hit rate
         """
         # Normalize inputs for consistent caching
         normalized_input = f"{make.lower().strip()}|{year.strip()}|{series.lower().strip()}|{description.lower().strip()}"

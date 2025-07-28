@@ -40,17 +40,17 @@ class DatabaseOptimizer:
         
         # Indexes for SKU prediction queries based on actual usage patterns
         optimization_queries = [
-            # 1. Composite index for exact Make/Year/Series/Description matching (Maestro-style queries)
+            # 1. Composite index for exact maker/fabrication_year/series/Description matching (Maestro-style queries)
             '''CREATE INDEX IF NOT EXISTS idx_exact_match 
-               ON processed_consolidado(vin_make, vin_year, vin_series, normalized_description)''',
+               ON processed_consolidado(maker, fabrication_year, series, normalized_descripcion)''',
             
             # 2. Index for SKU frequency analysis (Database source queries)
             '''CREATE INDEX IF NOT EXISTS idx_sku_frequency 
-               ON processed_consolidado(sku, vin_make, vin_year)''',
+               ON processed_consolidado(sku, maker, fabrication_year)''',
             
             # 3. Index for description-based fuzzy matching
             '''CREATE INDEX IF NOT EXISTS idx_description_search 
-               ON processed_consolidado(normalized_description, sku)''',
+               ON processed_consolidado(normalized_descripcion, sku)''',
             
             # 4. Index for VIN-based queries (VIN prediction)
             '''CREATE INDEX IF NOT EXISTS idx_vin_lookup 
@@ -58,7 +58,7 @@ class DatabaseOptimizer:
             
             # 5. Index for Make/Year combinations (common filtering)
             '''CREATE INDEX IF NOT EXISTS idx_make_year 
-               ON processed_consolidado(vin_make, vin_year)''',
+               ON processed_consolidado(maker, fabrication_year)''',
             
             # 6. Index for SKU-only queries (SKU validation)
             '''CREATE INDEX IF NOT EXISTS idx_sku_only 
@@ -66,7 +66,7 @@ class DatabaseOptimizer:
             
             # 7. Covering index for common SELECT patterns
             '''CREATE INDEX IF NOT EXISTS idx_covering_sku_search 
-               ON processed_consolidado(vin_make, vin_year, vin_series, sku, normalized_description)'''
+               ON processed_consolidado(maker, fabrication_year, series, sku, normalized_descripcion)'''
         ]
         
         created_count = 0
@@ -107,20 +107,20 @@ class DatabaseOptimizer:
             ("Basic Count", "SELECT COUNT(*) FROM processed_consolidado"),
             
             # Query 2: Make-based filtering (common in Maestro search)
-            ("Make Filter", "SELECT COUNT(*) FROM processed_consolidado WHERE vin_make = 'Toyota'"),
+            ("Make Filter", "SELECT COUNT(*) FROM processed_consolidado WHERE maker = 'Toyota'"),
             
             # Query 3: Make + Year filtering (common combination)
-            ("Make+Year Filter", "SELECT COUNT(*) FROM processed_consolidado WHERE vin_make = 'Toyota' AND vin_year = 2020"),
+            ("Make+Year Filter", "SELECT COUNT(*) FROM processed_consolidado WHERE maker = 'Toyota' AND fabrication_year = 2020"),
             
             # Query 4: SKU frequency analysis (Database source)
-            ("SKU Frequency", "SELECT sku, COUNT(*) FROM processed_consolidado WHERE sku IS NOT NULL GROUP BY sku ORDER BY COUNT(*) DESC LIMIT 10"),
+            ("SKU Frequency", "SELECT referencia, COUNT(*) FROM processed_consolidado WHERE sku IS NOT NULL GROUP BY referencia ORDER BY COUNT(*) DESC LIMIT 10"),
             
             # Query 5: Description search (fuzzy matching)
-            ("Description Search", "SELECT COUNT(*) FROM processed_consolidado WHERE normalized_description LIKE '%parachoques%'"),
+            ("Description Search", "SELECT COUNT(*) FROM processed_consolidado WHERE normalized_descripcion LIKE '%parachoques%'"),
             
             # Query 6: Complex join-like query (full prediction pattern)
             ("Full Prediction Pattern", 
-             "SELECT sku, COUNT(*) FROM processed_consolidado WHERE vin_make = 'Toyota' AND vin_year = 2020 AND normalized_description LIKE '%delantero%' GROUP BY sku")
+             "SELECT referencia, COUNT(*) FROM processed_consolidado WHERE maker = 'Toyota' AND fabrication_year = 2020 AND normalized_descripcion LIKE '%delantero%' GROUP BY referencia")
         ]
         
         performance_results = {}
@@ -191,20 +191,20 @@ class DatabaseOptimizer:
             stats['unique_skus'] = cursor.fetchone()[0]
             
             # Unique makes
-            cursor.execute("SELECT COUNT(DISTINCT vin_make) FROM processed_consolidado WHERE vin_make IS NOT NULL")
+            cursor.execute("SELECT COUNT(DISTINCT maker) FROM processed_consolidado WHERE maker IS NOT NULL")
             stats['unique_makes'] = cursor.fetchone()[0]
             
             # Year range
-            cursor.execute("SELECT MIN(vin_year), MAX(vin_year) FROM processed_consolidado WHERE vin_year IS NOT NULL")
+            cursor.execute("SELECT MIN(fabrication_year), MAX(fabrication_year) FROM processed_consolidado WHERE fabrication_year IS NOT NULL")
             year_range = cursor.fetchone()
             stats['year_range'] = f"{year_range[0]}-{year_range[1]}" if year_range[0] else "N/A"
             
             # Top makes
             cursor.execute("""
-            SELECT vin_make, COUNT(*) as count 
+            SELECT maker, COUNT(*) as count 
             FROM processed_consolidado 
-            WHERE vin_make IS NOT NULL 
-            GROUP BY vin_make 
+            WHERE maker IS NOT NULL 
+            GROUP BY maker 
             ORDER BY count DESC 
             LIMIT 5
             """)

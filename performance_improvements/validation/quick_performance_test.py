@@ -47,10 +47,10 @@ def test_database_performance():
     test_queries = [
         ("Count All Records", "SELECT COUNT(*) FROM processed_consolidado"),
         ("Sample Records", "SELECT * FROM processed_consolidado LIMIT 5"),
-        ("Make Filter", "SELECT COUNT(*) FROM processed_consolidado WHERE vin_make = 'TOYOTA'"),
-        ("Year Filter", "SELECT COUNT(*) FROM processed_consolidado WHERE vin_year = '2020'"),
+        ("Make Filter", "SELECT COUNT(*) FROM processed_consolidado WHERE maker = 'TOYOTA'"),
+        ("Year Filter", "SELECT COUNT(*) FROM processed_consolidado WHERE fabrication_year = '2020'"),
         ("SKU Count", "SELECT COUNT(DISTINCT sku) FROM processed_consolidado WHERE sku IS NOT NULL"),
-        ("Description Search", "SELECT COUNT(*) FROM processed_consolidado WHERE normalized_description LIKE '%parachoques%'")
+        ("Description Search", "SELECT COUNT(*) FROM processed_consolidado WHERE normalized_descripcion LIKE '%parachoques%'")
     ]
     
     results = {}
@@ -104,9 +104,9 @@ def test_cache_system():
         
         # Test cache operations
         test_data = [
-            ("TOYOTA_2020_COROLLA_parachoques delantero", {"sku": "TEST001", "confidence": 0.9}),
-            ("HONDA_2019_CIVIC_faro izquierdo", {"sku": "TEST002", "confidence": 0.8}),
-            ("NISSAN_2021_SENTRA_espejo derecho", {"sku": "TEST003", "confidence": 0.7})
+            ("TOYOTA_2020_COROLLA_parachoques delantero", {"referencia": "TEST001", "confidence": 0.9}),
+            ("HONDA_2019_CIVIC_faro izquierdo", {"referencia": "TEST002", "confidence": 0.8}),
+            ("NISSAN_2021_SENTRA_espejo derecho", {"referencia": "TEST003", "confidence": 0.7})
         ]
         
         # Test cache operations with proper method names

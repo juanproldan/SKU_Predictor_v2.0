@@ -18,10 +18,10 @@
 
 * **1.2 Implementation Status - COMPLETED FEATURES:**
     * ✅ **Multi-Source SKU Prediction System** with 4 prediction sources
-    * ✅ **VIN Prediction Models** for Make, Model Year, and Series extraction
+    * ✅ **VIN Prediction Models** for maker, fabrication_year, and series extraction
     * ✅ **PyTorch Neural Network** for SKU prediction with optimized architecture
     * ✅ **Synonym Expansion System** (Equivalencias) for consistent input preprocessing
-    * ✅ **Expert-Validated Learning System** (Maestro) with 4-parameter matching
+    * ✅ **Expert-Validated Learning System** (Maestro) with 4-parameter matching (maker, fabrication_year, series, descripcion)
     * ✅ **Historical Database Integration** with frequency-based confidence scoring
     * ✅ **Fuzzy Matching Fallback** for handling unrecognized descriptions
     * ✅ **Comprehensive GUI** with responsive layout and confidence visualization
@@ -36,7 +36,7 @@
     * ✅ Enable non-technical users to quickly find collision part SKUs through **4 different prediction methods**
     * ✅ Handle variability in human-entered part descriptions via **global synonym expansion**
     * ✅ Predict SKUs for new vehicles using **trained VIN prediction models** and **neural networks**
-    * ✅ Implement learning loop via `Maestro.xlsx` with **4-parameter matching** (Make, Year, Series, Description)
+    * ✅ Implement learning loop via `Maestro.xlsx` with **4-parameter matching** (maker, fabrication_year, series, descripcion)
     * ✅ Provide intuitive user interface with **confidence scoring** and **source attribution**
     * ✅ Process large historical datasets efficiently for **offline model training**
 
@@ -66,8 +66,8 @@
 * ✅ **As a Fixacar employee preparing a bid, I want to open the application and enter the VIN and a list of required part descriptions.**
   - *Implementation: GUI with VIN input field and multi-line part descriptions text area*
 
-* ✅ **As a Fixacar employee, I want the application to show me the vehicle's key details (Make, Model, Year, Series) based on the VIN.**
-  - *Implementation: VIN prediction models extract Make, Model Year, and Series from 17-character VIN*
+* ✅ **As a Fixacar employee, I want the application to show me the vehicle's key details (maker, model, fabrication_year, series) based on the VIN.**
+  - *Implementation: VIN prediction models extract maker, fabrication_year, and series from 17-character VIN*
 
 * ✅ **As a Fixacar employee, for each part description I entered, I want the application to predict and provide a ranked list of probable SKUs for that vehicle and part, even if the description varies or it's a new vehicle VIN.**
   - *Implementation: 4-source prediction system with confidence scoring and ranking*
@@ -79,7 +79,7 @@
   - *Implementation: Radio button selection interface with manual entry option*
 
 * ✅ **As a Fixacar employee, I want my correct selections to be saved automatically to improve future predictions and suggestions for similar parts and vehicles by updating the Maestro file.**
-  - *Implementation: Learning mechanism saves confirmed selections to Maestro.xlsx with 4-parameter matching*
+  - *Implementation: Learning mechanism saves confirmed selections to Maestro.xlsx with 4-parameter matching (maker, fabrication_year, series, descripcion)*
 
 * ✅ **As a Fixacar employee, I want the system to learn when a suggested SKU was incorrect based on my feedback (declining or selecting a different one).**
   - *Implementation: User selections update the expert-validated Maestro database for future high-confidence matches*
@@ -89,7 +89,7 @@
 * **3.1 Application Interface - ✅ IMPLEMENTED:**
     * ✅ **Tkinter GUI application** for Windows with responsive design
     * ✅ **VIN text input** with automatic correction (I→1, O/Q→0)
-    * ✅ **Multi-line Part Descriptions text area** for batch processing
+    * ✅ **Multi-line Part descripcion text area** for batch processing
     * ✅ **"Find SKUs" button** with dark styling for visibility
     * ✅ **Two-column layout**: Input frame (60%) and Vehicle Details frame (40%)
     * ✅ **Scrollable results area** with responsive grid layout and smart text wrapping
@@ -104,10 +104,10 @@
 * **3.2 VIN Decoding & Vehicle Identification - ✅ IMPLEMENTED:**
     * ✅ **17-character VIN validation** with regex pattern matching
     * ✅ **VIN feature extraction** (WMI, Year Code, VDS)
-    * ✅ **Trained ML models** for Make, Model Year, and Series prediction:
-      - **Make Prediction**: Uses WMI (World Manufacturer Identifier)
-      - **Year Prediction**: Uses VIN year code with fallback decoding
-      - **Series Prediction**: Uses WMI + VDS (Vehicle Descriptor Section)
+    * ✅ **Trained ML models** for maker, fabrication_year, and series prediction:
+      - **maker Prediction**: Uses WMI (World Manufacturer Identifier)
+      - **fabrication_year Prediction**: Uses VIN year code with fallback decoding
+      - **series Prediction**: Uses WMI + VDS (Vehicle Descriptor Section)
     * ✅ **Error handling** for unknown VIN patterns with graceful fallbacks
 
 * **3.3 Text Normalization - ✅ IMPLEMENTED:**
@@ -123,7 +123,7 @@
 
 ### **🔄 3.4 Multi-SKU Maestro Support - ✅ IMPLEMENTED:**
 * **Problem Solved**: Many-to-many relationships between parts and vehicles
-  - Same part description can have multiple valid SKUs (different suppliers, cross-compatible parts)
+  - Same part descripcion can have multiple valid SKUs (different suppliers, cross-compatible parts)
   - Same SKU can fit multiple vehicle combinations (shared parts across models)
   - Example: Renault Logan front bumper also fits Renault Sandero (different SKUs, same part)
 
@@ -157,7 +157,7 @@
       - Each group gets a unique Group_ID for identification
       - All terms in group map to the same Group_ID
     * ✅ **Global preprocessing function** (`expand_synonyms()`):
-      - Processes ALL descriptions before ANY prediction method
+      - Processes ALL descripcion before ANY prediction method
       - Ensures consistent input across Maestro, Database, and Neural Network
       - Example: "FAROLA IZQ", "FAROLA IZ" → "GROUP_1001" (equivalence group)
     * ✅ **Equivalencia_Row_ID assignment** (1-based row index)
@@ -165,7 +165,7 @@
 
 * **3.5 Data Loading & Connection - ✅ IMPLEMENTED:**
     * ✅ **Maestro.xlsx loading** with comprehensive data processing:
-      - Text normalization for description columns
+      - Text normalization for descripcion columns
       - Equivalencia_Row_ID lookup and storage
       - Bracketed value correction ([2012] → 2012, ['Mazda'] → Mazda)
       - Data type validation and conversion
@@ -181,12 +181,12 @@
     * ✅ **4-Source Prediction Architecture** with intelligent ranking and deduplication
     * ✅ **Input Processing Pipeline**:
       1. **Synonym Expansion**: Apply global synonym expansion FIRST
-      2. **Text Normalization**: Normalize expanded description
+      2. **Text Normalization**: Normalize expanded descripcion
       3. **Equivalencia Lookup**: Find Equivalencia_Row_ID
       4. **Fuzzy Fallback**: Handle unrecognized terms
 
     * ✅ **PREDICTION SOURCE 1: Maestro Data (Confidence: 90-100%)**
-      - **4-Parameter Exact Matching**: Make + Year + Series + Description
+      - **4-Parameter Exact Matching**: maker + fabrication_year + series + descripcion
       - **Solo confidence**: 90% (0.9) - Expert validated but not perfect
       - **With NN consensus**: 100% (1.0) - Ultimate confidence, auto-selected
       - **Expert-validated entries** take highest priority
@@ -194,7 +194,7 @@
 
     * ✅ **PREDICTION SOURCE 2: Neural Network (Confidence: 70-85%)**
       - **PyTorch Optimized Model** with bidirectional LSTM + attention
-      - **4-Parameter Input**: Make + Year + Series + Description
+      - **4-Parameter Input**: maker + fabrication_year + series + descripcion
       - **Variable confidence**: Based on model prediction confidence scores
       - **Advanced architecture**: Embedding → LSTM → Attention → Dense layers
       - **Source**: AI-powered prediction for new combinations
@@ -203,7 +203,7 @@
       - **SQLite queries** on `fixacar_history.db`
       - **Frequency-based confidence**: High (80%) for 20+ exact matches, Low (40%) for few matches
       - **Quality-based scoring**: Penalties for outliers and fuzzy matches
-      - **Matching criteria**: Make + Year + Equivalencia_Row_ID
+      - **Matching criteria**: maker + fabrication_year + Equivalencia_Row_ID
       - **Source**: Historical bid data
 
     * ✅ **PREDICTION SOURCE 4: Series Fuzzy Matching (Confidence: Variable)**
@@ -225,14 +225,14 @@
       - **Source attribution**: Users see prediction source
       - **Auto-selection**: 100% confidence predictions pre-selected
 * **3.7 Output Interface - ✅ IMPLEMENTED:**
-    * ✅ **Vehicle Details Display**: Shows predicted Make, Model Year, Series from VIN
-    * ✅ **Ranked SKU Suggestions**: Multiple suggestions per part description
+    * ✅ **Vehicle Details Display**: Shows predicted maker, fabrication_year, series from VIN
+    * ✅ **Ranked SKU Suggestions**: Multiple suggestions per part descripcion
     * ✅ **Confidence & Source Visualization**:
       - Confidence scores (0-100%) clearly displayed
       - Source attribution (Maestro, DB, Neural Network, Fuzzy)
     * ✅ **Radio Button Selection Interface**: User-friendly SKU confirmation
     * ✅ **Manual Entry Option**: Expert override capability
-    * ✅ **Equivalencias Status Indication**: Shows when descriptions aren't found
+    * ✅ **Equivalencias Status Indication**: Shows when descripcion aren't found
     * ✅ **Scrollable Results**: Handles multiple parts and suggestions efficiently
 
 * **3.8 Learning Mechanism & Feedback System - ✅ IMPLEMENTED:**
@@ -241,7 +241,7 @@
       - Tracks user confirmations and manual entries
     * ✅ **Maestro Database Updates**:
       - Adds new entries to in-memory Maestro structure
-      - **4-Parameter Storage**: Make, Year, Series, Description
+      - **4-Parameter Storage**: maker, fabrication_year, series, descripcion
       - Assigns confidence 1.0 and source "UserConfirmed"
       - Includes timestamp (Date_Added)
       - **Duplicate prevention** based on VIN details and normalized description
