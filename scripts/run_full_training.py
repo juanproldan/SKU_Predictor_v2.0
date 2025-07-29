@@ -17,7 +17,8 @@ import json
 from datetime import datetime
 
 # Add src to path
-current_dir = os.path.dirname(os.path.abspath(__file__))
+script_dir = os.path.dirname(os.path.abspath(__file__))
+current_dir = os.path.dirname(script_dir)  # Go up one level to project root
 src_path = os.path.join(current_dir, 'src')
 if src_path not in sys.path:
     sys.path.insert(0, src_path)

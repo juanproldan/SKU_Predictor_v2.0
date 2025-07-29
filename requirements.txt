@@ -2,10 +2,12 @@ pandas>=2.3.1
 openpyxl
 requests
 scikit-learn==1.7.1
-numpy>=1.26.4,<2.0  # Compatible with PyTorch
+numpy>=1.26.4,<2.0  # Compatible with PyTorch and spaCy
 joblib # For saving/loading models
 tensorflow # For neural networks
 torch # For PyTorch neural networks
 torchvision # PyTorch vision utilities
 fuzzywuzzy # For fuzzy string matching
 python-Levenshtein # For faster fuzzy matching
+spacy>=3.8.0 # For Spanish NLP processing
+https://github.com/explosion/spacy-models/releases/download/es_core_news_sm-3.8.0/es_core_news_sm-3.8.0-py3-none-any.whl # Spanish language model

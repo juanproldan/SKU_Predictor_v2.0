@@ -268,6 +268,19 @@ class FixacarApp:
         print("🚀 Initializing performance optimizations...")
 
         try:
+            # Initialize spaCy text processor
+            print("  🧠 Initializing spaCy Spanish text processor...")
+            try:
+                from utils.spacy_text_processor import initialize_spacy_processor
+                self.spacy_processor = initialize_spacy_processor()
+                if self.spacy_processor:
+                    print("  ✅ spaCy processor initialized successfully")
+                else:
+                    print("  ⚠️ spaCy processor initialization failed - using legacy processing")
+            except Exception as e:
+                print(f"  ⚠️ spaCy processor error: {e} - using legacy processing")
+                self.spacy_processor = None
+
             # Cache disabled for stability
             self.referencia_cache = None
             print("  ⚠️ SKU prediction cache disabled for stability")
@@ -311,9 +324,23 @@ class FixacarApp:
 
     def enhanced_normalize_text(self, text: str, **kwargs) -> str:
         """
-        Enhanced text normalization using smart processor when available
-        Falls back to standard normalize_text if smart processor is not available
+        Enhanced text normalization using spaCy processor when available.
+        Priority order:
+        1. spaCy processor (NEW - best accuracy for Spanish)
+        2. Smart processor (legacy enhanced)
+        3. Standard normalize_text (fallback)
         """
+        # First try spaCy processor (highest priority)
+        if hasattr(self, 'spacy_processor') and self.spacy_processor:
+            try:
+                # Use spaCy for advanced Spanish linguistic processing
+                spacy_result = self.spacy_processor.process_text(text)
+                print(f"  🧠 spaCy processing: '{text}' → '{spacy_result}'")
+                return spacy_result
+            except Exception as e:
+                print(f"⚠️ spaCy processing failed: {e}, trying smart processor...")
+
+        # Fallback to smart processor if available
         if PERFORMANCE_IMPROVEMENTS_AVAILABLE and self.smart_processor:
             try:
                 # Use enhanced text processing
@@ -329,10 +356,9 @@ class FixacarApp:
                 return final_text
             except Exception as e:
                 print(f"⚠️ Enhanced text processing failed, using standard: {e}")
-                return normalize_text(text, **kwargs)
-        else:
-            # Use standard text processing
-            return normalize_text(text, **kwargs)
+
+        # Final fallback to standard text processing
+        return normalize_text(text, **kwargs)
 
     def expand_synonyms(self, text: str) -> str:
         """

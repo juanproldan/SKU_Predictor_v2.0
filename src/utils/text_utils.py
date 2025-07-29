@@ -252,9 +252,10 @@ def smart_dot_handling(text: str) -> str:
     return text
 
 
-def normalize_text(text: str, use_fuzzy: bool = False, expand_linguistic_variations: bool = True) -> str:
+def normalize_text(text: str, use_fuzzy: bool = False, expand_linguistic_variations: bool = True, use_spacy: bool = True) -> str:
     """
     Normalizes a text string according to the project's requirements:
+    - NEW: Uses spaCy for advanced Spanish linguistic processing (gender agreement, POS tagging)
     - Smart dot handling (converts dots between letters to spaces)
     - Converts to lowercase.
     - Removes leading/trailing whitespace.
@@ -267,6 +268,7 @@ def normalize_text(text: str, use_fuzzy: bool = False, expand_linguistic_variati
         text: The input text to normalize
         use_fuzzy: Whether to use enhanced fuzzy normalization (default: False)
         expand_linguistic_variations: Whether to expand abbreviations, gender, plurals (default: True)
+        use_spacy: Whether to use spaCy for advanced linguistic processing (default: True)
 
     Returns:
         Normalized text string
@@ -278,7 +280,17 @@ def normalize_text(text: str, use_fuzzy: bool = False, expand_linguistic_variati
         # Use the enhanced fuzzy normalization
         return fuzzy_normalize_text(text)
 
-    # Standard normalization (updated implementation)
+    # NEW: Try spaCy processing first (if available and requested)
+    if use_spacy and expand_linguistic_variations:
+        try:
+            from .spacy_text_processor import process_text_with_spacy
+            return process_text_with_spacy(text)
+        except ImportError:
+            print("⚠️ spaCy processor not available, falling back to manual processing")
+        except Exception as e:
+            print(f"⚠️ spaCy processing failed: {e}, falling back to manual processing")
+
+    # FALLBACK: Standard normalization (original implementation)
     # 1. Smart dot handling (BEFORE other processing)
     text = smart_dot_handling(text)
 
@@ -309,6 +321,35 @@ def normalize_text(text: str, use_fuzzy: bool = False, expand_linguistic_variati
     return text
 
 
+def normalize_text_with_spacy(text: str) -> str:
+    """
+    Convenience function for spaCy-based text normalization.
+
+    This function specifically uses spaCy for advanced Spanish linguistic processing
+    and is the recommended approach for new implementations.
+
+    Args:
+        text: Input text to normalize
+
+    Returns:
+        Normalized text using spaCy processing
+    """
+    return normalize_text(text, use_fuzzy=False, expand_linguistic_variations=True, use_spacy=True)
+
+
+def normalize_text_legacy(text: str) -> str:
+    """
+    Legacy text normalization using manual rules (for comparison/fallback).
+
+    Args:
+        text: Input text to normalize
+
+    Returns:
+        Normalized text using legacy manual processing
+    """
+    return normalize_text(text, use_fuzzy=False, expand_linguistic_variations=True, use_spacy=False)
+
+
 def expand_comprehensive_abbreviations(text: str) -> str:
     """
     Expands automotive abbreviations using the comprehensive AUTOMOTIVE_ABBR dictionary.
@@ -330,7 +371,7 @@ def expand_comprehensive_abbreviations(text: str) -> str:
         # Check if the word is in our comprehensive abbreviation dictionary
         if word in AUTOMOTIVE_ABBR:
             expanded_words.append(AUTOMOTIVE_ABBR[word])
-            print(f"    Comprehensive abbrev: '{word}' -> '{AUTOMOTIVE_ABBR[word]}'")
+            # print(f"    Comprehensive abbrev: '{word}' -> '{AUTOMOTIVE_ABBR[word]}'")  # Disabled for performance
         else:
             expanded_words.append(word)
 
@@ -529,7 +570,7 @@ def handle_abbreviation_patterns(words: list) -> list:
                 break
 
         gender = get_noun_gender(immediate_noun) if immediate_noun else 'masculine'
-        print(f"    Pattern gender agreement: position {i}, immediate noun: '{immediate_noun}' ({gender})")
+        # print(f"    Pattern gender agreement: position {i}, immediate noun: '{immediate_noun}' ({gender})")  # Disabled for performance
 
         # Check if current word is a position abbreviation
         is_front = current_word in position_front_abbrevs
@@ -667,32 +708,32 @@ def expand_gender_dependent_abbreviation(abbrev: str, context_word: str, all_wor
     if all_words and word_index >= 0:
         immediate_noun = find_immediate_noun_for_adjective(all_words, word_index)
         gender = get_noun_gender(immediate_noun) if immediate_noun else 'masculine'
-        print(f"    Gender agreement: '{abbrev}' → immediate noun: '{immediate_noun}' ({gender}) → ", end="")
+        # print(f"    Gender agreement: '{abbrev}' → immediate noun: '{immediate_noun}' ({gender}) → ", end="")  # Disabled for performance
     else:
         # Fallback to old behavior for backward compatibility
         gender = get_noun_gender(context_word) if context_word else 'masculine'
-        print(f"    Gender agreement (fallback): '{abbrev}' → context: '{context_word}' ({gender}) → ", end="")
+        # print(f"    Gender agreement (fallback): '{abbrev}' → context: '{context_word}' ({gender}) → ", end="")  # Disabled for performance
 
     # Map abbreviations AND full words to their correct gender forms
     if abbrev in ['i', 'iz', 'izq', 'izquierdo', 'izquierda']:
         result = 'izquierdo' if gender == 'masculine' else 'izquierda'
-        print(f"'{result}'")
+        # print(f"'{result}'")  # Disabled for performance
         return result
     elif abbrev in ['der', 'dere', 'derec', 'derech', 'derecho', 'derecha']:
         result = 'derecho' if gender == 'masculine' else 'derecha'
-        print(f"'{result}'")
+        # print(f"'{result}'")  # Disabled for performance
         return result
     elif abbrev in ['del', 'dl', 'delan', 'delant', 'delante', 'delantero', 'delantera']:
         result = 'delantero' if gender == 'masculine' else 'delantera'
-        print(f"'{result}'")
+        # print(f"'{result}'")  # Disabled for performance
         return result
     elif abbrev in ['tra', 'tras', 'trase', 'traser', 'trasero', 'trasera']:
         result = 'trasero' if gender == 'masculine' else 'trasera'
-        print(f"'{result}'")
+        # print(f"'{result}'")  # Disabled for performance
         return result
 
     # Return unchanged if not handled
-    print(f"'{abbrev}' (unchanged)")
+    # print(f"'{abbrev}' (unchanged)")  # Disabled for performance
     return abbrev
 
 
