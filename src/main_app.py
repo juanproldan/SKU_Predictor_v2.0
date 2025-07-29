@@ -28,6 +28,13 @@ try:
     from performance_improvements.optimizations.parallel_predictor import initialize_parallel_predictor, get_parallel_predictor
     from performance_improvements.enhanced_text_processing.smart_text_processor import initialize_smart_text_processor, get_smart_processor
     from performance_improvements.enhanced_text_processing.equivalencias_analyzer import analyze_equivalencias_from_database
+
+    # New startup optimizations
+    from utils.optimized_startup import (
+        get_data_loader, get_spacy_loader, get_model_loader,
+        get_text_processor, initialize_optimizations
+    )
+    from utils.optimized_database import get_optimized_database
     PERFORMANCE_IMPROVEMENTS_AVAILABLE = True
     print("🚀 Performance improvements loaded successfully")
 except ImportError as e:
@@ -128,6 +135,9 @@ class FixacarApp:
         # Maximize the window on startup to ensure all buttons are visible
         self.root.state('zoomed')  # Windows equivalent of maximized
 
+        # Initialize startup optimizations first
+        self.initialize_startup_optimizations()
+
         # Load initial data and models
         self.load_all_data_and_models()
 
@@ -136,6 +146,28 @@ class FixacarApp:
 
         # Setup UI
         self.create_widgets()
+
+    def initialize_startup_optimizations(self):
+        """Initialize startup performance optimizations"""
+        try:
+            print("🚀 Initializing startup optimizations...")
+
+            # Initialize global optimizations
+            initialize_optimizations()
+
+            # Start spaCy loading in background
+            spacy_loader = get_spacy_loader()
+            spacy_loader.start_loading()
+
+            # Initialize optimized database
+            self.optimized_db = get_optimized_database()
+
+            print("✅ Startup optimizations initialized")
+
+        except Exception as e:
+            print(f"⚠️ Startup optimization error: {e}")
+            # Continue without optimizations
+            self.optimized_db = None
 
     def load_all_data_and_models(self):
         """Loads data files and trained prediction models on startup."""
@@ -1020,7 +1052,7 @@ class FixacarApp:
         - 'guardafango deld' (13 records)
         - 'absorbimpacto del' (11 records)
         """
-        desc = description.lower()
+        desc = descripcion.lower()
 
         # Apply specific transformations based on database patterns
         # Handle compound terms first
@@ -1222,6 +1254,7 @@ class FixacarApp:
         """
         Load all text processing rules from the unified Text_Processing_Rules.xlsx file.
         This includes equivalencias, abbreviations, and user corrections.
+        Uses optimized loading with caching when available.
         """
         global equivalencias_map_global, synonym_expansion_map_global
         global abbreviations_map_global, user_corrections_map_global
@@ -1232,6 +1265,32 @@ class FixacarApp:
             return
 
         try:
+            # Try optimized loading first
+            if hasattr(self, 'optimized_db') and self.optimized_db:
+                try:
+                    data_loader = get_data_loader()
+                    optimized_rules = data_loader.load_text_processing_rules_optimized(file_path)
+
+                    # Convert optimized format to global variables
+                    equivalencias_map_global = optimized_rules.get('equivalencias', {})
+                    abbreviations_map_global = optimized_rules.get('abbreviations', {})
+                    user_corrections_map_global = optimized_rules.get('user_corrections', {})
+
+                    # Create synonym expansion map for equivalencias
+                    synonym_expansion_map_global = {}
+                    for i, (term, equiv) in enumerate(equivalencias_map_global.items(), 1):
+                        synonym_expansion_map_global[term] = i
+
+                    print(f"✅ Loaded text processing rules (optimized):")
+                    print(f"   - Equivalencias: {len(equivalencias_map_global)} mappings")
+                    print(f"   - Abbreviations: {len(abbreviations_map_global)} mappings")
+                    print(f"   - User Corrections: {len(user_corrections_map_global)} mappings")
+                    return
+
+                except Exception as e:
+                    print(f"⚠️ Optimized loading failed: {e}, falling back to standard loading")
+
+            # Fallback to standard loading
             # Load Equivalencias tab
             equivalencias_df = pd.read_excel(file_path, sheet_name='Equivalencias')
             equivalencias_map_global = self._process_equivalencias_data(equivalencias_df)

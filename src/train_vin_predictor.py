@@ -222,13 +222,18 @@ def load_and_prepare_data():
         conn = sqlite3.connect(CONSOLIDADO_DB_PATH)
 
         # Query the database for relevant data
+        # IMPORTANT: Use DISTINCT to avoid duplicate VINs (same VIN appears for multiple parts)
+        # For VIN prediction, we only need one record per VIN since we're predicting vehicle details
         query = """
-        SELECT vin_number, maker as maker, model as model, series as series
+        SELECT DISTINCT vin_number, maker as maker, model as model, series as series
         FROM processed_consolidado
         WHERE vin_number IS NOT NULL
           AND maker IS NOT NULL
           AND model IS NOT NULL
           AND series IS NOT NULL
+          AND LENGTH(vin_number) = 17
+          AND vin_number != '00000000000000000'
+          AND vin_number NOT LIKE '%00000000000000000%'
         """
 
         df_raw = pd.read_sql_query(query, conn)
