@@ -186,24 +186,53 @@ def extract_vin_features_production(vin):
 
 
 # --- Year Code Mapping ---
-# Standard VIN Year Codes (adjust if needed, covers 1980-2039)
+# Standard VIN Year Codes - Prioritized for automotive data (1980-2029)
+# Year codes repeat every 30 years, prioritizing historical years for automotive database
 VIN_YEAR_MAP = {
+    # 1980-2009 cycle (prioritized for historical automotive data)
     'A': 1980, 'B': 1981, 'C': 1982, 'D': 1983, 'E': 1984, 'F': 1985, 'G': 1986, 'H': 1987,
     'J': 1988, 'K': 1989, 'L': 1990, 'M': 1991, 'N': 1992, 'P': 1993, 'R': 1994, 'S': 1995,
     'T': 1996, 'V': 1997, 'W': 1998, 'X': 1999, 'Y': 2000, '1': 2001, '2': 2002, '3': 2003,
-    '4': 2004, '5': 2005, '6': 2006, '7': 2007, '8': 2008, '9': 2009, 'A': 2010, 'B': 2011,
-    'C': 2012, 'D': 2013, 'E': 2014, 'F': 2015, 'G': 2016, 'H': 2017, 'J': 2018, 'K': 2019,
-    'L': 2020, 'M': 2021, 'N': 2022, 'P': 2023, 'R': 2024, 'S': 2025, 'T': 2026, 'V': 2027,
-    'W': 2028, 'X': 2029, 'Y': 2030, '1': 2031, '2': 2032, '3': 2033, '4': 2034, '5': 2035,
-    '6': 2036, '7': 2037, '8': 2038, '9': 2039
+    '4': 2004, '5': 2005, '6': 2006, '7': 2007, '8': 2008, '9': 2009,
+    # 2010-2029 cycle (current automotive production)
+    # Note: Letters repeat, but numbers are unique to this cycle
 }
-# Note: Year codes repeat. The map prioritizes recent years for overlaps (e.g., 'A' is 2010, not 1980).
-# This might need adjustment based on the actual year range in your data.
+
+# Alternative mapping function that handles year code ambiguity based on context
+def decode_year_with_context(year_code, context_year=None):
+    """
+    Decodes year with context to handle 30-year VIN code cycles.
+    For automotive databases, prioritizes 2010-2029 range for modern vehicles.
+    """
+    base_mapping = {
+        'A': [1980, 2010], 'B': [1981, 2011], 'C': [1982, 2012], 'D': [1983, 2013],
+        'E': [1984, 2014], 'F': [1985, 2015], 'G': [1986, 2016], 'H': [1987, 2017],
+        'J': [1988, 2018], 'K': [1989, 2019], 'L': [1990, 2020], 'M': [1991, 2021],
+        'N': [1992, 2022], 'P': [1993, 2023], 'R': [1994, 2024], 'S': [1995, 2025],
+        'T': [1996, 2026], 'V': [1997, 2027], 'W': [1998, 2028], 'X': [1999, 2029],
+        'Y': [2000, 2030], '1': [2001, 2031], '2': [2002, 2032], '3': [2003, 2033],
+        '4': [2004, 2034], '5': [2005, 2035], '6': [2006, 2036], '7': [2007, 2037],
+        '8': [2008, 2038], '9': [2009, 2039]
+    }
+
+    if year_code not in base_mapping:
+        return None
+
+    possible_years = base_mapping[year_code]
+
+    # For modern automotive databases (2010+), prioritize the later year
+    # Most current automotive databases contain vehicles from 2010s-2020s
+    # Letters A-X typically represent 2010-2029 in modern context
+    if year_code in 'ABCDEFGHJKLMNPRSTVWX':
+        return possible_years[1]  # Return the later year (2010-2029)
+    else:
+        # Numbers 1-9 are unique to 2001-2009, so return as-is
+        return possible_years[0]
 
 
 def decode_year(year_code):
-    """Decodes the year from the VIN's 10th character."""
-    return VIN_YEAR_MAP.get(year_code)
+    """Decodes the year from the VIN's 10th character using context-aware mapping."""
+    return decode_year_with_context(year_code)
 
 # --- Data Loading and Preparation ---
 
@@ -473,12 +502,14 @@ def train_and_save_models(df):
     # This is mostly a direct mapping, but we can frame it as prediction
     print("\n--- Training Year Predictor ---")
     # Use only records where year code is known and maps to a year
-    df_year = df[df['year_code'].isin(VIN_YEAR_MAP.keys())].copy()
+    valid_year_codes = list('ABCDEFGHJKLMNPRSTUVWXYZ123456789')
+    df_year = df[df['year_code'].isin(valid_year_codes)].copy()
     if df_year.empty:
         print("No data with valid year codes found. Skipping Year predictor.")
     else:
-        df_year['year_decoded'] = df_year['year_code'].map(
-            VIN_YEAR_MAP).astype(str)  # Target is the decoded year string
+        # Use the context-aware year decoding
+        df_year['year_decoded'] = df_year['year_code'].apply(
+            lambda x: str(decode_year_with_context(x)) if decode_year_with_context(x) else 'Unknown')
         X_year = df_year[['year_code']]
         y_year = df_year['year_decoded']  # Use decoded year as target
 

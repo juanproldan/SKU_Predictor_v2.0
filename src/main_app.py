@@ -43,7 +43,7 @@ except ImportError as e:
 # Import our PyTorch model implementation
 try:
     # Try relative imports first (for PyInstaller)
-    from models.referencia_nn_pytorch import load_model, predict_sku
+    from models.sku_nn_pytorch import load_model, predict_sku
     from utils.text_utils import normalize_text
     from utils.dummy_tokenizer import DummyTokenizer
     from train_vin_predictor import extract_vin_features_production, decode_year
@@ -517,7 +517,7 @@ class FixacarApp:
 
     def merge_dual_search_results(self, normalized_results: list, original_results: list) -> list:
         """
-        Merge and deduplicate results from both normalized_descripcion and original_descripcion searches.
+        Merge and deduplicate results from different text processing approaches on the descripcion column.
 
         Args:
             normalized_results: List of (referencia, frequency, 'normalized'/'normalized_fuzzy') tuples
@@ -1442,8 +1442,7 @@ class FixacarApp:
         # Updated column list - using original consolidado field names
         maestro_columns = [
             'Maestro_ID', 'maker', 'model',
-            'series', 'original_descripcion',
-            'normalized_descripcion', 'referencia',
+            'series', 'Original_descripcion_Input', 'Normalized_descripcion_Input', 'Confirmed_referencia',
             'Source', 'Date_Added'
         ]
         data_dir = os.path.dirname(file_path)
@@ -1481,12 +1480,24 @@ class FixacarApp:
                         elif value_str.startswith('[') and value_str.endswith(']'):
                             entry[col] = value_str[1:-1].strip("'\"")  # Remove [] format
 
-                original_desc = entry.get('original_descripcion', "")
+                # Handle both old and new column names for backward compatibility
+                original_desc = entry.get('Original_descripcion_Input', entry.get('descripcion', ""))
+                normalized_desc = entry.get('Normalized_descripcion_Input', "")
+
                 if pd.notna(original_desc):
-                    normalized_desc = normalize_text(str(original_desc))
-                    entry['normalized_descripcion'] = normalized_desc
+                    # Store both original and normalized descriptions
+                    entry['original_descripcion'] = str(original_desc)
+                    if pd.notna(normalized_desc) and str(normalized_desc).strip():
+                        entry['normalized_descripcion'] = str(normalized_desc)
+                    else:
+                        # If no normalized version, create one
+                        entry['normalized_descripcion'] = normalize_text(str(original_desc))
+                    # For backward compatibility, keep 'descripcion' field pointing to normalized
+                    entry['descripcion'] = entry['normalized_descripcion']
                 else:
+                    entry['original_descripcion'] = ""
                     entry['normalized_descripcion'] = ""
+                    entry['descripcion'] = ""
 
                 # Fix bracketed values in integer columns
                 for col in ['Maestro_ID', 'model']:
@@ -1501,6 +1512,14 @@ class FixacarApp:
                             # Keep original value if conversion fails, don't set to None
                             print(f"Warning: Could not convert {col} value '{original_value}' to integer, keeping original value")
                             entry[col] = original_value
+
+                # Handle referencia field with new column name
+                referencia_value = entry.get('Confirmed_referencia', entry.get('referencia', ""))
+                if pd.notna(referencia_value):
+                    entry['referencia'] = str(referencia_value)
+                else:
+                    entry['referencia'] = ""
+
                 # Removed Confidence column processing - confidence is calculated dynamically
                 maestro_list.append(entry)
             print(f"Loaded {len(maestro_list)} records from Maestro.xlsx.")
@@ -1761,12 +1780,12 @@ class FixacarApp:
 
             # Call the predict_sku function
             predicted_sku, confidence = predict_sku(
-                model=sku_nn_model,
+                pytorch_model=sku_nn_model,
                 encoders=encoders,
-                make=maker,
+                maker=maker,
                 model_year=model,
                 series=series,
-                description=descripcion,
+                descripcion=descripcion,
                 device=device
             )
 
@@ -2237,7 +2256,7 @@ class FixacarApp:
                     maestro_make = str(maestro_entry.get('maker', ''))
                     maestro_year = str(maestro_entry.get('model', ''))
                     maestro_series = str(maestro_entry.get('series', ''))
-                    maestro_desc = str(maestro_entry.get('normalized_descripcion', '')).lower()
+                    maestro_desc = str(maestro_entry.get('descripcion', '')).lower()
 
                     # Check 3-parameter exact match (maker, model, series) - CASE INSENSITIVE
                     make_match = maestro_make.upper() == maker.upper()
@@ -2384,20 +2403,20 @@ class FixacarApp:
 
                     # Try preprocessed original description first
                     sku_nn_output = self._get_sku_nn_prediction(
-                        make=maker,
+                        maker=maker,
                         model=model_str_scalar,
                         series=series_str_for_nn,
-                        description=preprocessed_original
+                        descripcion=preprocessed_original
                     )
 
                     # If no good result, try preprocessed expanded description
                     if not sku_nn_output or (sku_nn_output and sku_nn_output[1] < 0.7):
                         print(f"  Trying NN prediction with preprocessed expanded description...")
                         sku_nn_output_expanded = self._get_sku_nn_prediction(
-                            make=maker,
+                            maker=maker,
                             model=model_str_scalar,
                             series=series_str_for_nn,
-                            description=preprocessed_expanded
+                            descripcion=preprocessed_expanded
                         )
                         # Use expanded result if it's better
                         if sku_nn_output_expanded and (not sku_nn_output or sku_nn_output_expanded[1] > sku_nn_output[1]):
@@ -2418,7 +2437,7 @@ class FixacarApp:
                     print(
                         f"  Searching SQLite DB (maker: {maker}, model: {model}, series: {series})...")
                     try:
-                        # DUAL MATCHING STRATEGY: Search both normalized_descripcion AND original_descripcion
+                        # DUAL MATCHING STRATEGY: Search descripcion column with different text processing approaches
 
                         # STEP 1A: Search normalized_descripcion column
                         print(f"    Trying normalized_descripcion match: '{normalized_original}'")
@@ -2452,14 +2471,14 @@ class FixacarApp:
                             if normalized_results:
                                 print(f"    ✅ Found {len(normalized_results)} unique SKUs via FUZZY SERIES match (base: '{base_series}')")
 
-                        # STEP 1B: Search original_descripcion column
-                        print(f"    Trying original_descripcion match: '{original_desc}'")
+                        # STEP 1B: Search descripcion column (original descriptions)
+                        print(f"    Trying descripcion match: '{original_desc}'")
 
                         # First try exact series match (CASE-INSENSITIVE)
                         cursor.execute("""
                             SELECT referencia, COUNT(*) as frequency, 'original' as match_type
                             FROM processed_consolidado
-                            WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(original_descripcion) = LOWER(?)
+                            WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(descripcion) = LOWER(?)
                             GROUP BY referencia
                             ORDER BY COUNT(*) DESC
                         """, (maker, model, series, original_desc))
@@ -2475,7 +2494,7 @@ class FixacarApp:
                                 FROM processed_consolidado
                                 WHERE LOWER(maker) = LOWER(?) AND model = ?
                                 AND (LOWER(series) = LOWER(?) OR LOWER(series) LIKE LOWER(?) OR LOWER(series) LIKE LOWER(?))
-                                AND LOWER(original_descripcion) = LOWER(?)
+                                AND LOWER(descripcion) = LOWER(?)
                                 GROUP BY referencia
                                 ORDER BY COUNT(*) DESC
                             """, (maker, model, base_series, f"{base_series}%", f"%{base_series}%", original_desc))
@@ -2508,11 +2527,11 @@ class FixacarApp:
                             """, (maker, model, series, abbreviated_desc))
                             normalized_abbrev_results = cursor.fetchall()
 
-                            # Search original_descripcion column with abbreviated description
+                            # Search descripcion column with abbreviated description
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'original_abbrev' as match_type
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(original_descripcion) = LOWER(?)
+                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(descripcion) = LOWER(?)
                                 GROUP BY referencia
                                 ORDER BY COUNT(*) DESC
                             """, (maker, model, series, abbreviated_desc))
@@ -2542,7 +2561,7 @@ class FixacarApp:
                                     FROM processed_consolidado
                                     WHERE LOWER(maker) = LOWER(?) AND model = ?
                                     AND (LOWER(series) = LOWER(?) OR LOWER(series) LIKE LOWER(?) OR LOWER(series) LIKE LOWER(?))
-                                    AND LOWER(original_descripcion) = LOWER(?)
+                                    AND LOWER(descripcion) = LOWER(?)
                                     GROUP BY referencia
                                     ORDER BY COUNT(*) DESC
                                 """, (maker, model, base_series, f"{base_series}%", f"%{base_series}%", abbreviated_desc))
@@ -2584,11 +2603,11 @@ class FixacarApp:
                             """, (maker, model, f'%{series}%', abbreviated_desc))
                             normalized_fuzzy_results = cursor.fetchall()
 
-                            # Search original_descripcion with fuzzy series
+                            # Search descripcion with fuzzy series
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'original_fuzzy' as match_type
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(original_descripcion) = LOWER(?)
+                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(descripcion) = LOWER(?)
                                 GROUP BY referencia
                                 ORDER BY COUNT(*) DESC
                             """, (maker, model, f'%{series}%', abbreviated_desc))
@@ -2618,20 +2637,20 @@ class FixacarApp:
                         if not suggestions:
                             print("    No match with abbreviated, trying fuzzy series matching with original description...")
 
-                            # Search normalized_descripcion
+                            # Search descripcion with normalized original
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'normalized_fuzzy_orig' as match_type
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(normalized_descripcion) = LOWER(?)
+                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(descripcion) = LOWER(?)
                                 GROUP BY referencia
                             """, (maker, model, f'%{series}%', normalized_original))
                             normalized_orig_results = cursor.fetchall()
 
-                            # Search original_descripcion
+                            # Search descripcion with original description
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'original_fuzzy_orig' as match_type
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(original_descripcion) = LOWER(?)
+                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(descripcion) = LOWER(?)
                                 GROUP BY referencia
                             """, (maker, model, f'%{series}%', original_desc))
                             original_orig_results = cursor.fetchall()
@@ -2661,11 +2680,11 @@ class FixacarApp:
                             """, (maker, model, f'%{series}%', normalized_expanded))
                             normalized_exp_results = cursor.fetchall()
 
-                            # Search original_descripcion
+                            # Search descripcion
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'original_fuzzy_exp' as match_type
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(original_descripcion) = LOWER(?)
+                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(descripcion) = LOWER(?)
                                 GROUP BY referencia
                             """, (maker, model, f'%{series}%', expanded_desc))
                             original_exp_results = cursor.fetchall()
@@ -2698,10 +2717,10 @@ class FixacarApp:
                     try:
                         # STEP 1: Try exact series match with fuzzy description
                         cursor.execute("""
-                            SELECT referencia, normalized_descripcion, COUNT(*) as frequency
+                            SELECT referencia, descripcion, COUNT(*) as frequency
                             FROM processed_consolidado
                             WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?)
-                            GROUP BY referencia, normalized_descripcion
+                            GROUP BY referencia, descripcion
                             ORDER BY frequency DESC
                         """, (maker, model, series))
                         results = cursor.fetchall()
@@ -2733,10 +2752,10 @@ class FixacarApp:
                             print(
                                 f"  Final Fallback SQLite search (Fuzzy series: maker, model, series LIKE '%{series}%')...")
                             cursor.execute("""
-                                SELECT referencia, normalized_descripcion, COUNT(*) as frequency
+                                SELECT referencia, descripcion, COUNT(*) as frequency
                                 FROM processed_consolidado
                                 WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?)
-                                GROUP BY referencia, normalized_descripcion
+                                GROUP BY referencia, descripcion
                                 ORDER BY frequency DESC
                             """, (maker, model, f'%{series}%'))
                             fuzzy_results = cursor.fetchall()
@@ -3278,7 +3297,7 @@ class FixacarApp:
                     if part_data:
                         selections_to_save.append({
                             "vin_details": self.vehicle_details,
-                            "original_descripcion": original_desc,
+                            "original_descripcion": part_data["original"],  # Original description
                             "normalized_descripcion": part_data["normalized_expanded"],  # Use expanded for consistency
                             "equivalencia_id": part_data["equivalencia_id"],
                             "confirmed_sku": selected_sku,
@@ -3331,9 +3350,9 @@ class FixacarApp:
                     'maker': selection['vin_details'].get('maker'),
                     'model': model,
                     'series': selection['vin_details'].get('series'),
-                    'original_descripcion': selection['original_descripcion'],
-                    'normalized_descripcion': selection['normalized_descripcion'],
-                    'referencia': selection['confirmed_sku'],
+                    'Original_descripcion_Input': selection['original_descripcion'],
+                    'Normalized_descripcion_Input': selection['normalized_descripcion'],
+                    'Confirmed_referencia': selection['confirmed_sku'],
                     'Source': selection.get('source', 'UserConfirmed'),
                     'Date_Added': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
@@ -3349,11 +3368,11 @@ class FixacarApp:
             print(
                 f"Attempting to save {added_count} new entries to {DEFAULT_MAESTRO_PATH}...")
             try:
-                # Using original consolidado field names
+                # Using original consolidado field names with new Maestro column structure
                 maestro_columns = [
                     'Maestro_ID', 'maker', 'model',
-                    'series', 'original_descripcion',
-                    'normalized_descripcion', 'referencia',
+                    'series', 'Original_descripcion_Input',
+                    'Normalized_descripcion_Input', 'Confirmed_referencia',
                     'Source', 'Date_Added'
                 ]
                 df_to_save = pd.DataFrame(

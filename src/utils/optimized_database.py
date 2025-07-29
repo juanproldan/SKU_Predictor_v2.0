@@ -47,16 +47,15 @@ class OptimizedDatabase:
         indexes = [
             # SKU prediction indexes
             "CREATE INDEX IF NOT EXISTS idx_vehicle_sku ON processed_consolidado(maker, model, series, referencia)",
-            "CREATE INDEX IF NOT EXISTS idx_description_search ON processed_consolidado(normalized_descripcion)",
-            "CREATE INDEX IF NOT EXISTS idx_original_description ON processed_consolidado(original_descripcion)",
+            "CREATE INDEX IF NOT EXISTS idx_description_search ON processed_consolidado(descripcion)",
             "CREATE INDEX IF NOT EXISTS idx_sku_frequency ON processed_consolidado(referencia)",
-            
+
             # Composite indexes for complex queries
-            "CREATE INDEX IF NOT EXISTS idx_vehicle_desc ON processed_consolidado(maker, model, series, normalized_descripcion)",
-            "CREATE INDEX IF NOT EXISTS idx_maker_desc ON processed_consolidado(maker, normalized_descripcion)",
-            
+            "CREATE INDEX IF NOT EXISTS idx_vehicle_desc ON processed_consolidado(maker, model, series, descripcion)",
+            "CREATE INDEX IF NOT EXISTS idx_maker_desc ON processed_consolidado(maker, descripcion)",
+
             # Full-text search index (if supported)
-            "CREATE VIRTUAL TABLE IF NOT EXISTS fts_descriptions USING fts5(referencia, normalized_descripcion, original_descripcion, content='processed_consolidado', content_rowid='rowid')",
+            "CREATE VIRTUAL TABLE IF NOT EXISTS fts_descriptions USING fts5(referencia, descripcion, content='processed_consolidado', content_rowid='rowid')",
         ]
         
         for index_sql in indexes:
@@ -69,7 +68,7 @@ class OptimizedDatabase:
         
         # Populate FTS index if it was created
         try:
-            cursor.execute("INSERT OR REPLACE INTO fts_descriptions SELECT referencia, normalized_descripcion, original_descripcion FROM processed_consolidado")
+            cursor.execute("INSERT OR REPLACE INTO fts_descriptions SELECT referencia, descripcion FROM processed_consolidado")
             print("  ✅ Populated FTS index")
         except sqlite3.Error:
             pass  # FTS might not be available
@@ -124,15 +123,15 @@ class OptimizedDatabase:
         # Try exact match first (fastest)
         exact_query = """
             SELECT referencia, COUNT(*) as frequency
-            FROM processed_consolidado 
-            WHERE maker = ? AND model = ? AND series = ? 
-            AND (normalized_descripcion = ? OR original_descripcion = ?)
-            GROUP BY referencia 
-            ORDER BY frequency DESC 
+            FROM processed_consolidado
+            WHERE maker = ? AND model = ? AND series = ?
+            AND descripcion = ?
+            GROUP BY referencia
+            ORDER BY frequency DESC
             LIMIT ?
         """
         
-        results = self._execute_cached_query(exact_query, (maker, model, series, description.lower(), description.lower(), limit))
+        results = self._execute_cached_query(exact_query, (maker, model, series, description.lower(), limit))
         
         if results:
             return [{'sku': row[0], 'frequency': row[1], 'confidence': 0.9} for row in results]
@@ -140,16 +139,16 @@ class OptimizedDatabase:
         # Fallback to fuzzy match
         fuzzy_query = """
             SELECT referencia, COUNT(*) as frequency
-            FROM processed_consolidado 
-            WHERE maker = ? AND model = ? AND series = ? 
-            AND (normalized_descripcion LIKE ? OR original_descripcion LIKE ?)
-            GROUP BY referencia 
-            ORDER BY frequency DESC 
+            FROM processed_consolidado
+            WHERE maker = ? AND model = ? AND series = ?
+            AND descripcion LIKE ?
+            GROUP BY referencia
+            ORDER BY frequency DESC
             LIMIT ?
         """
         
         like_pattern = f"%{description.lower()}%"
-        results = self._execute_cached_query(fuzzy_query, (maker, model, series, like_pattern, like_pattern, limit))
+        results = self._execute_cached_query(fuzzy_query, (maker, model, series, like_pattern, limit))
         
         return [{'sku': row[0], 'frequency': row[1], 'confidence': 0.7} for row in results]
     
@@ -198,16 +197,16 @@ class OptimizedDatabase:
         # Fallback to optimized LIKE search
         like_query = """
             SELECT referencia, COUNT(*) as frequency
-            FROM processed_consolidado 
-            WHERE normalized_descripcion LIKE ? OR original_descripcion LIKE ?
-            GROUP BY referencia 
+            FROM processed_consolidado
+            WHERE descripcion LIKE ?
+            GROUP BY referencia
             HAVING frequency >= 3
-            ORDER BY frequency DESC 
+            ORDER BY frequency DESC
             LIMIT ?
         """
         
         like_pattern = f"%{description.lower()}%"
-        results = self._execute_cached_query(like_query, (like_pattern, like_pattern, limit))
+        results = self._execute_cached_query(like_query, (like_pattern, limit))
         
         predictions = []
         for row in results:

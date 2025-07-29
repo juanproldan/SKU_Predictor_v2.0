@@ -194,52 +194,53 @@ def load_model(model_dir):
         return None, encoders
 
 
-def predict_sku(model, encoders, make, model_year, series, description, device='cpu'):
+def predict_sku(pytorch_model, encoders, maker, model_year, series, descripcion, device='cpu'):
     """
     Predict SKU using the PyTorch model.
 
     Args:
-        model: Loaded PyTorch model
+        pytorch_model: Loaded PyTorch model
         encoders: Dictionary of encoders
-        make: Vehicle make
+        maker: Vehicle maker
         model_year: Vehicle model year
         series: Vehicle series
-        description: Part description
+        descripcion: Part description
         device: Device to run inference on ('cpu' or 'cuda')
 
     Returns:
         predicted_sku: Predicted SKU
         confidence: Confidence score (probability)
     """
-    if model is None or encoders is None:
+    if pytorch_model is None or encoders is None:
         return None, 0.0
 
     try:
         # Move model to device
-        model = model.to(device)
+        pytorch_model = pytorch_model.to(device)
 
         # Normalize description
         from utils.text_utils import normalize_text
-        normalized_desc = normalize_text(description)
+        normalized_desc = normalize_text(descripcion)
 
         # Encode categorical features with error handling for unseen labels
+        # Try new field names first, fallback to old field names for compatibility
         try:
-            make_enc = encoders['Make'].transform([make.upper()])
-        except ValueError:
+            maker_enc = encoders.get('maker', encoders.get('Make')).transform([maker.upper()])
+        except (ValueError, AttributeError):
             print(
-                f"Warning: Make '{make}' not seen during training. Using default value.")
-            make_enc = np.array([0])  # Use first class as default
+                f"Warning: Maker '{maker}' not seen during training. Using default value.")
+            maker_enc = np.array([0])  # Use first class as default
 
         try:
-            year_enc = encoders['Model Year'].transform([str(model_year)])
-        except ValueError:
+            model_enc = encoders.get('model', encoders.get('Model Year')).transform([str(model_year)])
+        except (ValueError, AttributeError):
             print(
-                f"Warning: Model Year '{model_year}' not seen during training. Using default value.")
-            year_enc = np.array([0])  # Use first class as default
+                f"Warning: Model '{model_year}' not seen during training. Using default value.")
+            model_enc = np.array([0])  # Use first class as default
 
         try:
-            series_enc = encoders['Series'].transform([series.upper()])
-        except ValueError:
+            series_enc = encoders.get('series', encoders.get('Series')).transform([series.upper()])
+        except (ValueError, AttributeError):
             print(
                 f"Warning: Series '{series}' not seen during training. Using default value.")
             series_enc = np.array([0])  # Use first class as default
@@ -261,17 +262,19 @@ def predict_sku(model, encoders, make, model_year, series, description, device='
 
         # Convert inputs to PyTorch tensors
         cat_tensor = torch.tensor(
-            [[make_enc[0], year_enc[0], series_enc[0]]], dtype=torch.float32).to(device)
+            [[maker_enc[0], model_enc[0], series_enc[0]]], dtype=torch.float32).to(device)
         text_tensor = torch.tensor([padded_seq], dtype=torch.long).to(device)
 
         # Get prediction
         with torch.no_grad():
-            logits = model(cat_tensor, text_tensor)
+            logits = pytorch_model(cat_tensor, text_tensor)
             probs = F.softmax(logits, dim=1)
 
         # Get predicted class and confidence
         confidence, predicted_idx = torch.max(probs, dim=1)
-        predicted_sku = encoders['sku'].inverse_transform(
+        # Try new field name first, fallback to old field name for compatibility
+        sku_encoder = encoders.get('referencia', encoders.get('sku'))
+        predicted_sku = sku_encoder.inverse_transform(
             predicted_idx.cpu().numpy())
 
         return predicted_sku[0], confidence.item()

@@ -174,7 +174,7 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
         recent_limit = max(1000, int(total_count * 0.02))  # At least 1000 records
 
         query = f"""
-        SELECT vin_number, normalized_descripcion, referencia
+        SELECT vin_number, descripcion, referencia
         FROM processed_consolidado
         WHERE referencia IS NOT NULL
         ORDER BY ROWID DESC
@@ -187,9 +187,9 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
 
         # Optionally limit the data size for faster testing
         if SAMPLE_SIZE:
-            query = f"SELECT vin_number, normalized_descripcion, referencia FROM processed_consolidado WHERE referencia IS NOT NULL LIMIT {SAMPLE_SIZE}"
+            query = f"SELECT vin_number, descripcion, referencia FROM processed_consolidado WHERE referencia IS NOT NULL LIMIT {SAMPLE_SIZE}"
         else:
-            query = "SELECT vin_number, normalized_descripcion, referencia FROM processed_consolidado WHERE referencia IS NOT NULL"
+            query = "SELECT vin_number, descripcion, referencia FROM processed_consolidado WHERE referencia IS NOT NULL"
 
     if not os.path.exists(DB_PATH):
         print(f"Error: Database file not found at {DB_PATH}")
@@ -287,7 +287,7 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
 
     # Clean data
     df.dropna(subset=['maker', 'model', 'series',
-              'normalized_descripcion', 'referencia'], inplace=True)
+              'descripcion', 'referencia'], inplace=True)
     df = df[(df['maker'] != 'N/A') & (df['model']
                                      != 'N/A') & (df['series'] != 'N/A')]
     print(f"Records after VIN prediction and NA drop: {len(df)}")
@@ -329,10 +329,10 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
             SKU_NN_MODEL_DIR, f'encoder_{name}.joblib'))
 
     # Tokenize and pad text descriptions
-    print("Tokenizing and padding 'normalized_descripcion'...")
-    # Note: descriptions are already normalized in the database by offline_data_processor.py
+    print("Tokenizing and padding 'descripcion'...")
+    # Note: descriptions are already normalized in the database by unified_consolidado_processor.py
     # which uses normalize_text() with case-insensitive processing and linguistic variations
-    descriptions = df['normalized_descripcion'].astype(str).tolist()
+    descriptions = df['descripcion'].astype(str).tolist()
 
     # Additional normalization to ensure consistency (case-insensitive, synonyms, etc.)
     descriptions = [normalize_text(desc, expand_linguistic_variations=True) for desc in descriptions]

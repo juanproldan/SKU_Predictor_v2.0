@@ -155,12 +155,11 @@ def setup_database(db_path):
         CREATE TABLE IF NOT EXISTS processed_consolidado (
             vin_number TEXT,                    -- Cleaned VINs for VIN training (may be NULL)
             maker TEXT,                         -- For both VIN & SKU training
-            model INTEGER,          -- For both VIN & SKU training
+            model INTEGER,                      -- For both VIN & SKU training
             series TEXT,                        -- For both VIN & SKU training
-            original_descripcion TEXT,          -- For SKU training (may be NULL)
-            normalized_descripcion TEXT,        -- For SKU training, processed (may be NULL)
+            descripcion TEXT,                   -- For SKU training (may be NULL)
             referencia TEXT,                    -- For SKU training (may be NULL)
-            UNIQUE(vin_number, original_descripcion, referencia) -- Prevent duplicates
+            UNIQUE(vin_number, descripcion, referencia) -- Prevent duplicates
         )
         ''')
         
@@ -240,25 +239,21 @@ def process_consolidado_record(record, equivalencias_map):
         return None  # Skip - not useful for either training purpose
 
     # Process description if present
-    normalized_descripcion = None
-    equivalencia_row_id = None
+    processed_descripcion = None
 
     if description:
         try:
-            normalized_descripcion = normalize_text(description, equivalencias_map)
-            # For now, set equivalencia_row_id to None - could be enhanced later
-            equivalencia_row_id = None
+            processed_descripcion = normalize_text(description, equivalencias_map)
         except Exception as e:
             logging.getLogger(__name__).warning(f"Error normalizing description '{description}': {e}")
-            normalized_descripcion = description  # Use original if normalization fails
+            processed_descripcion = description  # Use original if normalization fails
 
     return {
         'vin_number': cleaned_vin,
         'maker': make,
         'model': year,
         'series': series,
-        'original_descripcion': description,
-        'normalized_descripcion': normalized_descripcion,
+        'descripcion': processed_descripcion,
         'referencia': referencia
     }
 
@@ -338,7 +333,7 @@ def process_consolidado_to_db(conn, consolidado_path, equivalencias_map):
                 has_sku_data = (processed_record['maker'] and
                                processed_record['model'] and
                                processed_record['series'] and
-                               processed_record['normalized_descripcion'] and
+                               processed_record['descripcion'] and
                                processed_record['referencia'])
 
                 if has_vin_data and has_sku_data:
@@ -353,15 +348,14 @@ def process_consolidado_to_db(conn, consolidado_path, equivalencias_map):
                     cursor.execute('''
                     INSERT INTO processed_consolidado (
                         vin_number, maker, model, series,
-                        original_descripcion, normalized_descripcion, referencia
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        descripcion, referencia
+                    ) VALUES (?, ?, ?, ?, ?, ?)
                     ''', (
                         processed_record['vin_number'],
                         processed_record['maker'],
                         processed_record['model'],
                         processed_record['series'],
-                        processed_record['original_descripcion'],
-                        processed_record['normalized_descripcion'],
+                        processed_record['descripcion'],
                         processed_record['referencia']
                     ))
                     stats['inserted_records'] += 1
@@ -451,7 +445,7 @@ def main():
             cursor.execute("""
                 SELECT COUNT(*) FROM processed_consolidado
                 WHERE maker IS NOT NULL AND model IS NOT NULL
-                AND series IS NOT NULL AND normalized_descripcion IS NOT NULL
+                AND series IS NOT NULL AND descripcion IS NOT NULL
                 AND referencia IS NOT NULL
             """)
             sku_training_ready = cursor.fetchone()[0]

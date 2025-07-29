@@ -41,8 +41,8 @@ class DatabaseOptimizer:
         # Indexes for SKU prediction queries based on actual usage patterns
         optimization_queries = [
             # 1. Composite index for exact maker/model/series/Description matching (Maestro-style queries)
-            '''CREATE INDEX IF NOT EXISTS idx_exact_match 
-               ON processed_consolidado(maker, model, series, normalized_descripcion)''',
+            '''CREATE INDEX IF NOT EXISTS idx_exact_match
+               ON processed_consolidado(maker, model, series, descripcion)''',
             
             # 2. Index for SKU frequency analysis (Database source queries)
             '''CREATE INDEX IF NOT EXISTS idx_referencia_frequency
@@ -50,7 +50,7 @@ class DatabaseOptimizer:
 
             # 3. Index for description-based fuzzy matching
             '''CREATE INDEX IF NOT EXISTS idx_description_search
-               ON processed_consolidado(normalized_descripcion, referencia)''',
+               ON processed_consolidado(descripcion, referencia)''',
             
             # 4. Index for VIN-based queries (VIN prediction)
             '''CREATE INDEX IF NOT EXISTS idx_vin_lookup 
@@ -66,7 +66,7 @@ class DatabaseOptimizer:
 
             # 7. Covering index for common SELECT patterns
             '''CREATE INDEX IF NOT EXISTS idx_covering_referencia_search
-               ON processed_consolidado(maker, model, series, referencia, normalized_descripcion)'''
+               ON processed_consolidado(maker, model, series, referencia, descripcion)'''
         ]
         
         created_count = 0
@@ -116,11 +116,11 @@ class DatabaseOptimizer:
             ("SKU Frequency", "SELECT referencia, COUNT(*) FROM processed_consolidado WHERE referencia IS NOT NULL GROUP BY referencia ORDER BY COUNT(*) DESC LIMIT 10"),
             
             # Query 5: Description search (fuzzy matching)
-            ("Description Search", "SELECT COUNT(*) FROM processed_consolidado WHERE normalized_descripcion LIKE '%parachoques%'"),
+            ("Description Search", "SELECT COUNT(*) FROM processed_consolidado WHERE descripcion LIKE '%parachoques%'"),
             
             # Query 6: Complex join-like query (full prediction pattern)
-            ("Full Prediction Pattern", 
-             "SELECT referencia, COUNT(*) FROM processed_consolidado WHERE maker = 'Toyota' AND model = 2020 AND normalized_descripcion LIKE '%delantero%' GROUP BY referencia")
+            ("Full Prediction Pattern",
+             "SELECT referencia, COUNT(*) FROM processed_consolidado WHERE maker = 'Toyota' AND model = 2020 AND descripcion LIKE '%delantero%' GROUP BY referencia")
         ]
         
         performance_results = {}
