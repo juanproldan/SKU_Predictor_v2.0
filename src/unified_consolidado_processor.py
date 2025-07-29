@@ -202,13 +202,127 @@ def load_equivalencias_map(text_processing_path):
         
         logger.info(f"Loaded {len(equivalencias_map)} equivalencias mappings")
         return equivalencias_map
-        
+
     except Exception as e:
         logger.error(f"Error loading equivalencias map: {e}")
         return {}
 
+def load_series_normalization_map(text_processing_path):
+    """
+    Load series normalization mapping from Text_Processing_Rules.xlsx Series tab.
+    Returns dictionary mapping (maker, series) to normalized_series.
+    """
+    logger = logging.getLogger(__name__)
+
+    if not os.path.exists(text_processing_path):
+        logger.warning(f"Text processing rules file not found at {text_processing_path}")
+        return {}
+
+    try:
+        # Load series normalization from Excel file
+        df = pd.read_excel(text_processing_path, sheet_name='Series')
+        series_map = {}
+
+        for index, row in df.iterrows():
+            # Get all non-empty values from the row
+            series_variations = []
+            for col in df.columns:
+                if pd.notna(row[col]) and str(row[col]).strip():
+                    series_variations.append(str(row[col]).strip())
+
+            if len(series_variations) < 2:
+                continue  # Need at least 2 variations to create mappings
+
+            # First variation is the canonical/normalized form
+            normalized_series = series_variations[0]
+
+            # Extract maker from the normalized form if it contains maker info
+            # Example: "MAZDA/CX-30 (DM)/BASICO" -> maker="MAZDA", series="CX-30"
+            if '/' in normalized_series:
+                parts = normalized_series.split('/')
+                if len(parts) >= 2:
+                    maker = parts[0].strip()
+                    series_part = parts[1].strip()
+                    # Remove parenthetical info: "CX-30 (DM)" -> "CX-30"
+                    if '(' in series_part:
+                        series_part = series_part.split('(')[0].strip()
+                    normalized_series = series_part
+                else:
+                    # Fallback: use the whole string and assume no specific maker
+                    maker = None
+            else:
+                # Simple series without maker info
+                maker = None
+
+            # Create mappings for all variations
+            for variation in series_variations:
+                if variation != normalized_series:  # Don't map to itself
+                    # Clean the variation (remove maker prefix if present)
+                    clean_variation = variation
+                    if '/' in variation:
+                        parts = variation.split('/')
+                        if len(parts) >= 2:
+                            clean_variation = parts[1].strip()
+                            if '(' in clean_variation:
+                                clean_variation = clean_variation.split('(')[0].strip()
+
+                    # Create mapping key
+                    if maker:
+                        # Maker-specific mapping
+                        key = (maker.upper(), clean_variation.upper())
+                        series_map[key] = normalized_series
+                        logger.debug(f"Series mapping: {maker}/{clean_variation} → {normalized_series}")
+                    else:
+                        # Generic mapping (applies to all makers)
+                        key = ("*", clean_variation.upper())
+                        series_map[key] = normalized_series
+                        logger.debug(f"Series mapping: */{clean_variation} → {normalized_series}")
+
+        logger.info(f"Loaded {len(series_map)} series normalization mappings")
+        return series_map
+
+    except Exception as e:
+        logger.warning(f"Could not load series normalization (Series tab may not exist): {e}")
+        return {}
+
+def normalize_series_preprocessing(maker, series, series_map):
+    """
+    Normalize series using the series normalization mapping during preprocessing.
+
+    Args:
+        maker: Vehicle maker (e.g., "Mazda", "Ford")
+        series: Original series (e.g., "CX30", "CX 30")
+        series_map: Series normalization mapping dictionary
+
+    Returns:
+        Normalized series (e.g., "CX-30") or original if no mapping found
+    """
+    if not series or not series_map:
+        return series
+
+    # Clean inputs
+    maker_clean = maker.upper().strip() if maker else "*"
+    series_clean = series.upper().strip()
+
+    # Try maker-specific mapping first
+    maker_key = (maker_clean, series_clean)
+    if maker_key in series_map:
+        normalized = series_map[maker_key]
+        logging.getLogger(__name__).debug(f"Series normalized: {maker}/{series} → {normalized} (maker-specific)")
+        return normalized
+
+    # Try generic mapping (applies to all makers)
+    generic_key = ("*", series_clean)
+    if generic_key in series_map:
+        normalized = series_map[generic_key]
+        logging.getLogger(__name__).debug(f"Series normalized: {maker}/{series} → {normalized} (generic)")
+        return normalized
+
+    # No mapping found, return original
+    return series
+
 # --- Main Processing Logic ---
-def process_consolidado_record(record, equivalencias_map):
+def process_consolidado_record(record, equivalencias_map, series_map=None):
     """
     Process a single record from Consolidado.json.
     Returns processed record data or None if record should be skipped.
@@ -230,6 +344,13 @@ def process_consolidado_record(record, equivalencias_map):
     series = str(series).strip() if series else None
     description = str(description).strip() if description else None
     referencia = str(referencia).strip() if referencia and str(referencia).strip() else None
+
+    # Apply series normalization during preprocessing (hybrid approach - Phase 1)
+    if series and series_map:
+        normalized_series = normalize_series_preprocessing(make, series, series_map)
+        if normalized_series != series:
+            logging.getLogger(__name__).info(f"Series preprocessed: {make}/{series} → {normalized_series}")
+            series = normalized_series
 
     # Determine record usefulness
     good_for_vin_training = (cleaned_vin and make and year and series)
@@ -257,7 +378,7 @@ def process_consolidado_record(record, equivalencias_map):
         'referencia': referencia
     }
 
-def process_consolidado_to_db(conn, consolidado_path, equivalencias_map):
+def process_consolidado_to_db(conn, consolidado_path, equivalencias_map, series_map=None):
     """
     Reads Consolidado.json, processes records, and inserts into the database.
     """
@@ -318,7 +439,7 @@ def process_consolidado_to_db(conn, consolidado_path, equivalencias_map):
                 }
 
                 # Process the combined record
-                processed_record = process_consolidado_record(combined_record, equivalencias_map)
+                processed_record = process_consolidado_record(combined_record, equivalencias_map, series_map)
 
                 if processed_record is None:
                     stats['skipped_insufficient_data'] += 1
@@ -417,6 +538,10 @@ def main():
     logger.info("Loading text processing rules...")
     equivalencias_map = load_equivalencias_map(TEXT_PROCESSING_PATH)
 
+    # Load series normalization rules (hybrid approach - Phase 1)
+    logger.info("Loading series normalization rules...")
+    series_map = load_series_normalization_map(TEXT_PROCESSING_PATH)
+
     # Setup database
     logger.info("Setting up database...")
     conn = setup_database(OUTPUT_DB_PATH)
@@ -427,7 +552,7 @@ def main():
     try:
         # Process Consolidado.json
         logger.info("Starting Consolidado.json processing...")
-        success = process_consolidado_to_db(conn, CONSOLIDADO_PATH, equivalencias_map)
+        success = process_consolidado_to_db(conn, CONSOLIDADO_PATH, equivalencias_map, series_map)
 
         if success:
             # Final database statistics

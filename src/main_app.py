@@ -102,6 +102,7 @@ equivalencias_map_global = {}
 synonym_expansion_map_global = {}  # New: maps synonyms to equivalence group IDs
 abbreviations_map_global = {}  # New: maps abbreviations to full forms
 user_corrections_map_global = {}  # New: maps original text to corrected text
+series_normalization_map_global = {}  # New: maps (maker, series) to normalized_series
 maestro_data_global = []  # This will hold the list of dictionaries
 # VIN details lookup is replaced by models
 
@@ -427,37 +428,78 @@ class FixacarApp:
         expanded_text = ' '.join(expanded_words)
         return expanded_text
 
+    def normalize_series(self, maker: str, series: str) -> str:
+        """
+        Normalize series using the series normalization mapping.
+
+        This function implements the hybrid approach:
+        1. First check for exact mapping in series_normalization_map_global
+        2. If no mapping found, return original series (fallback to fuzzy matching later)
+
+        Args:
+            maker: Vehicle maker (e.g., "Mazda", "Ford")
+            series: Original series (e.g., "CX30", "CX 30")
+
+        Returns:
+            Normalized series (e.g., "CX-30") or original if no mapping found
+        """
+        if not series or not series_normalization_map_global:
+            return series
+
+        # Clean inputs
+        maker_clean = maker.upper().strip() if maker else "*"
+        series_clean = series.upper().strip()
+
+        # Try maker-specific mapping first
+        maker_key = (maker_clean, series_clean)
+        if maker_key in series_normalization_map_global:
+            normalized = series_normalization_map_global[maker_key]
+            print(f"    Series normalized: {maker}/{series} → {normalized} (maker-specific)")
+            return normalized
+
+        # Try generic mapping (applies to all makers)
+        generic_key = ("*", series_clean)
+        if generic_key in series_normalization_map_global:
+            normalized = series_normalization_map_global[generic_key]
+            print(f"    Series normalized: {maker}/{series} → {normalized} (generic)")
+            return normalized
+
+        # No mapping found, return original
+        return series
+
     def calculate_frequency_based_confidence(self, frequency: int, prediction_type: str = "DB") -> float:
         """
         Calculate confidence based on absolute frequency of SKU occurrences in database.
 
-        Updated confidence ranges for new priority system:
-        - 1-2 occurrences: 0.4-0.45 (40-45%) - very low confidence
-        - 3-9 occurrences: 0.45-0.55 (45-55%) - low confidence
-        - 10-19 occurrences: 0.55-0.7 (55-70%) - medium confidence
-        - 20+ occurrences: 0.7-0.8 (70-80%) - high confidence
+        Updated confidence ranges based on user requirements:
+        - 1 occurrence: 30-40% - very low confidence (likely errors)
+        - 2-4 occurrences: 40-50% - low confidence
+        - 5-9 occurrences: 50-60% - medium-low confidence
+        - 10-19 occurrences: 60-70% - medium confidence
+        - 20+ occurrences: 80% - high confidence (as requested)
 
         Args:
             frequency: Number of times this SKU appears in database for this combination
             prediction_type: Type of prediction for confidence adjustment
 
         Returns:
-            Confidence score between 0.4 and 0.8 (40-80%)
+            Confidence score between 0.3 and 0.8 (30-80%)
         """
-        if frequency < 3:
-            # Very low confidence for rare occurrences (likely errors)
-            base_confidence = 0.4 + 0.025 * frequency  # 0.4-0.45 range
-        elif frequency < 10:
-            # Low confidence for insufficient data
-            base_confidence = 0.45 + 0.01 * frequency  # 0.45-0.54 range
-        elif frequency < 20:
-            # Medium confidence for moderate data
-            base_confidence = 0.55 + 0.0075 * frequency  # 0.55-0.7 range
+        if frequency == 1:
+            # Very low confidence for single occurrences (likely errors)
+            base_confidence = 0.30
+        elif frequency <= 4:
+            # Low confidence for few occurrences
+            base_confidence = 0.40 + 0.025 * (frequency - 2)  # 0.40-0.45 range
+        elif frequency <= 9:
+            # Medium-low confidence
+            base_confidence = 0.50 + 0.02 * (frequency - 5)  # 0.50-0.60 range
+        elif frequency <= 19:
+            # Medium confidence
+            base_confidence = 0.60 + 0.01 * (frequency - 10)  # 0.60-0.70 range
         else:
-            # High confidence for reliable data (20+ occurrences)
-            # Cap at 50+ occurrences to avoid overconfidence
-            capped_frequency = min(frequency, 50)
-            base_confidence = 0.7 + 0.002 * capped_frequency  # 0.7-0.8 range
+            # High confidence for reliable data (20+ occurrences = 80% as requested)
+            base_confidence = 0.80
 
         # Slight adjustment based on prediction type
         if prediction_type == "DB-Exact":
@@ -563,6 +605,51 @@ class FixacarApp:
             print(f"    📊 No matches found in either normalized or original descriptions")
 
         return merged_results
+
+    def get_most_common_series_for_wmi(self, wmi: str, maker: str) -> str:
+        """
+        Get the most common series for a given WMI and maker from the database.
+        This is used as a fallback when VIN prediction fails.
+
+        Args:
+            wmi: World Manufacturer Identifier (first 3 characters of VIN)
+            maker: Vehicle manufacturer name
+
+        Returns:
+            Most common series name or "Unknown" if not found
+        """
+        try:
+            conn = sqlite3.connect('Source_Files/processed_consolidado.db')
+            cursor = conn.cursor()
+
+            # Get the most common series for this WMI and maker
+            cursor.execute("""
+                SELECT series, COUNT(*) as frequency
+                FROM processed_consolidado
+                WHERE SUBSTR(vin_number, 1, 3) = ?
+                AND UPPER(maker) = UPPER(?)
+                AND series IS NOT NULL
+                AND series != ''
+                AND series != 'N/A'
+                GROUP BY series
+                ORDER BY frequency DESC
+                LIMIT 1
+            """, (wmi, maker))
+
+            result = cursor.fetchone()
+            conn.close()
+
+            if result:
+                series, frequency = result
+                print(f"    📊 Most common series for WMI '{wmi}': '{series}' ({frequency} records)")
+                return series
+            else:
+                print(f"    ❌ No series found for WMI '{wmi}' and maker '{maker}'")
+                return "Unknown"
+
+        except Exception as e:
+            print(f"    ❌ Error in fallback series lookup: {e}")
+            return "Unknown"
 
     def unified_text_preprocessing(self, text: str) -> str:
         """
@@ -1253,11 +1340,11 @@ class FixacarApp:
     def load_text_processing_rules(self, file_path: str):
         """
         Load all text processing rules from the unified Text_Processing_Rules.xlsx file.
-        This includes equivalencias, abbreviations, and user corrections.
+        This includes equivalencias, abbreviations, user corrections, and series normalization.
         Uses optimized loading with caching when available.
         """
         global equivalencias_map_global, synonym_expansion_map_global
-        global abbreviations_map_global, user_corrections_map_global
+        global abbreviations_map_global, user_corrections_map_global, series_normalization_map_global
 
         print(f"Loading text processing rules from: {file_path}")
         if not os.path.exists(file_path):
@@ -1275,6 +1362,7 @@ class FixacarApp:
                     equivalencias_map_global = optimized_rules.get('equivalencias', {})
                     abbreviations_map_global = optimized_rules.get('abbreviations', {})
                     user_corrections_map_global = optimized_rules.get('user_corrections', {})
+                    series_normalization_map_global = optimized_rules.get('series_normalization', {})
 
                     # Create synonym expansion map for equivalencias
                     synonym_expansion_map_global = {}
@@ -1285,6 +1373,7 @@ class FixacarApp:
                     print(f"   - Equivalencias: {len(equivalencias_map_global)} mappings")
                     print(f"   - Abbreviations: {len(abbreviations_map_global)} mappings")
                     print(f"   - User Corrections: {len(user_corrections_map_global)} mappings")
+                    print(f"   - Series Normalization: {len(series_normalization_map_global)} mappings")
                     return
 
                 except Exception as e:
@@ -1303,10 +1392,19 @@ class FixacarApp:
             user_corrections_df = pd.read_excel(file_path, sheet_name='User_Corrections')
             user_corrections_map_global = self._process_user_corrections_data(user_corrections_df)
 
+            # Load Series Normalization tab
+            try:
+                series_df = pd.read_excel(file_path, sheet_name='Series')
+                series_normalization_map_global = self._process_series_normalization_data(series_df)
+            except Exception as e:
+                print(f"Warning: Could not load Series tab: {e}. Series normalization will be disabled.")
+                series_normalization_map_global = {}
+
             print(f"✅ Loaded text processing rules:")
             print(f"   - Equivalencias: {len(equivalencias_map_global)} mappings")
             print(f"   - Abbreviations: {len(abbreviations_map_global)} mappings")
             print(f"   - User Corrections: {len(user_corrections_map_global)} mappings")
+            print(f"   - Series Normalization: {len(series_normalization_map_global)} mappings")
 
         except Exception as e:
             print(f"Error loading text processing rules: {e}")
@@ -1315,6 +1413,7 @@ class FixacarApp:
             synonym_expansion_map_global = {}
             abbreviations_map_global = {}
             user_corrections_map_global = {}
+            series_normalization_map_global = {}
 
     def _process_equivalencias_data(self, df: pd.DataFrame) -> dict:
         """Process equivalencias data and create both ID mapping and synonym expansion dictionary."""
@@ -1387,6 +1486,76 @@ class FixacarApp:
                         print(f"    📝 Loaded phrase correction: {original} → {corrected}")
 
         return corrections_map
+
+    def _process_series_normalization_data(self, df: pd.DataFrame) -> dict:
+        """
+        Process series normalization data into a mapping dictionary.
+
+        Expected format: Each row contains series variations that should be normalized to the first column.
+        Example: CX-30 | CX30 | CX 30 | MAZDA/CX-30 (DM)/BASICO
+
+        Returns:
+            dict: Mapping of (maker, original_series) -> normalized_series
+        """
+        series_map = {}
+
+        for index, row in df.iterrows():
+            # Get all non-empty values from the row
+            series_variations = []
+            for col in df.columns:
+                if pd.notna(row[col]) and str(row[col]).strip():
+                    series_variations.append(str(row[col]).strip())
+
+            if len(series_variations) < 2:
+                continue  # Need at least 2 variations to create mappings
+
+            # First variation is the canonical/normalized form
+            normalized_series = series_variations[0]
+
+            # Extract maker from the normalized form if it contains maker info
+            # Example: "MAZDA/CX-30 (DM)/BASICO" -> maker="MAZDA", series="CX-30"
+            if '/' in normalized_series:
+                parts = normalized_series.split('/')
+                if len(parts) >= 2:
+                    maker = parts[0].strip()
+                    series_part = parts[1].strip()
+                    # Remove parenthetical info: "CX-30 (DM)" -> "CX-30"
+                    if '(' in series_part:
+                        series_part = series_part.split('(')[0].strip()
+                    normalized_series = series_part
+                else:
+                    # Fallback: use the whole string and assume no specific maker
+                    maker = None
+            else:
+                # Simple series without maker info
+                maker = None
+
+            # Create mappings for all variations
+            for variation in series_variations:
+                if variation != normalized_series:  # Don't map to itself
+                    # Clean the variation (remove maker prefix if present)
+                    clean_variation = variation
+                    if '/' in variation:
+                        parts = variation.split('/')
+                        if len(parts) >= 2:
+                            clean_variation = parts[1].strip()
+                            if '(' in clean_variation:
+                                clean_variation = clean_variation.split('(')[0].strip()
+
+                    # Create mapping key
+                    if maker:
+                        # Maker-specific mapping
+                        key = (maker.upper(), clean_variation.upper())
+                        series_map[key] = normalized_series
+                        print(f"    Series mapping: {maker}/{clean_variation} → {normalized_series}")
+                    else:
+                        # Generic mapping (applies to all makers)
+                        key = ("*", clean_variation.upper())
+                        series_map[key] = normalized_series
+                        print(f"    Series mapping: */{clean_variation} → {normalized_series}")
+
+        print(f"Loaded {len(series_map)} series normalization mappings")
+        return series_map
 
     def load_equivalencias_data(self, file_path: str) -> dict:
         """
@@ -1926,7 +2095,14 @@ class FixacarApp:
             series_features_encoded = encoder_x_series.transform(series_df)
             # Check if either feature was unknown
             if -1 in series_features_encoded[0]:
-                details['series'] = "Unknown (VDS/WMI)"
+                # FALLBACK STRATEGY: When VIN prediction fails, use database lookup
+                print(f"    ⚠️ VIN prediction failed for WMI='{features['wmi']}', VDS='{features['vds_full']}'")
+                fallback_series = self.get_most_common_series_for_wmi(features['wmi'], details['maker'])
+                if fallback_series and fallback_series != "Unknown":
+                    details['series'] = fallback_series
+                    print(f"    🔄 Using fallback series: '{fallback_series}'")
+                else:
+                    details['series'] = "Unknown (VDS/WMI)"
             else:
                 series_pred_encoded = model_series.predict(
                     series_features_encoded)
@@ -1935,9 +2111,22 @@ class FixacarApp:
                         series_pred_encoded.reshape(-1, 1))[0]
                     # Ensure it's a scalar value, not an array
                     if hasattr(series_result, 'item'):
-                        details['series'] = series_result.item()
+                        predicted_series = series_result.item()
                     else:
-                        details['series'] = series_result
+                        predicted_series = series_result
+
+                    # Check if the prediction is meaningful or just "Unknown"
+                    if predicted_series and "Unknown" not in str(predicted_series) and "N/A" not in str(predicted_series):
+                        details['series'] = predicted_series
+                    else:
+                        # FALLBACK STRATEGY: Even when model predicts "Unknown", try database lookup
+                        print(f"    ⚠️ VIN model predicted unclear series: '{predicted_series}'")
+                        fallback_series = self.get_most_common_series_for_wmi(features['wmi'], details['maker'])
+                        if fallback_series and fallback_series != "Unknown":
+                            details['series'] = fallback_series
+                            print(f"    🔄 Using fallback series: '{fallback_series}'")
+                        else:
+                            details['series'] = predicted_series
                 else:
                     details['series'] = "Unknown (Prediction)"
 
@@ -1992,9 +2181,9 @@ class FixacarApp:
         Also tracks all sources for transparency and applies consensus-based confidence adjustment.
 
         Confidence Rules:
-        - Single source (Maestro only): Max 0.90 confidence
+        - Single source (Maestro only): Max 0.80-0.85 confidence (based on frequency)
         - Single source (NN only): Max 0.85 confidence
-        - Single source (DB only): Max 0.70 confidence
+        - Single source (DB only): Max 0.80 confidence
         - Multiple sources (Maestro + NN): Can reach 1.00 confidence
         - Multiple sources (any combination): Bonus for consensus
         """
@@ -2049,9 +2238,9 @@ class FixacarApp:
         Calculate consensus-adjusted confidence based on prediction sources.
 
         Updated rules for new priority system:
-        - Single source (Maestro only): Max 90% (0.90) confidence
+        - Single source (Maestro only): Max 80-85% confidence (based on frequency)
         - Single source (NN only): Max 85% (0.85) confidence
-        - Single source (DB only): Max 80% (0.80) confidence
+        - Single source (DB only): Max 80% (0.80) confidence (frequency-based: 20+ = 80%)
         - NN + DB consensus: Higher value + 10% boost
         - Maestro + NN consensus: 100% (1.0) confidence
         - All three sources: 100% (1.0) confidence
@@ -2067,7 +2256,7 @@ class FixacarApp:
             # Single source - apply caps
             source = sources[0]
             if "Maestro" in source:
-                return min(base_confidence, 0.90)  # 90% max for Maestro alone
+                return min(base_confidence, 0.85)  # 80-85% max for Maestro alone (reduced from 90%)
             elif "SKU-NN" in source or "NN" in source:
                 return min(base_confidence, 0.85)  # 85% max for NN alone
             elif "DB" in source:
@@ -2172,9 +2361,17 @@ class FixacarApp:
                 ttk.Label(self.scrollable_frame, text=f"Error: Database not found at {DEFAULT_DB_PATH}").pack(
                     anchor="nw")
                 return
+
             db_conn = sqlite3.connect(DEFAULT_DB_PATH)
             cursor = db_conn.cursor()
-            print("Database connection successful.")
+
+            # Apply database optimizations for better performance
+            cursor.execute("PRAGMA journal_mode=WAL")  # Enable WAL mode for better concurrent access
+            cursor.execute("PRAGMA cache_size=10000")  # 10MB cache
+            cursor.execute("PRAGMA temp_store=memory")  # Use memory for temp tables
+            cursor.execute("PRAGMA mmap_size=268435456")  # 256MB memory map
+
+            print("Database connection successful with optimized settings.")
 
             for part_info in self.processed_parts:
                 original_desc = part_info["original"]
@@ -2242,8 +2439,17 @@ class FixacarApp:
                 else:
                     series = str(predicted_series_val) if pd.notna(predicted_series_val) else 'N/A'
 
+                # Apply runtime series normalization (hybrid approach - Phase 2)
+                original_series = series
+                if series and series != 'N/A':
+                    normalized_series = self.normalize_series(maker, series)
+                    if normalized_series != series:
+                        print(f"    🔄 Series normalized at runtime: {maker}/{series} → {normalized_series}")
+                        series = normalized_series
+
                 # Debug: Show what we're searching for
-                print(f"    🔍 Searching for: maker='{maker}', model='{model_str_scalar}', series='{series}'")
+                print(f"    🔍 Searching for: maker='{maker}', model='{model_str_scalar}', series='{series}'" +
+                      (f" (normalized from '{original_series}')" if series != original_series else ""))
                 print(f"    🔍 Description (original): '{normalized_original}'")
                 print(f"    🔍 Description (expanded): '{normalized_expanded}'")
 
@@ -2309,9 +2515,11 @@ class FixacarApp:
 
                     # Add ALL unique SKUs to suggestions (ordered by frequency)
                     for referencia, frequency in sorted_skus:
+                        # Maestro base confidence: 80-85% (adjusted from 90%)
+                        maestro_confidence = 0.85 if frequency >= 3 else 0.80  # Higher confidence for repeated entries
                         suggestions = self._aggregate_sku_suggestions(
-                            suggestions, referencia, 0.90, "Maestro")  # Use 0.90 as specified
-                        print(f"    ✅ Maestro referencia: {referencia} (Frequency: {frequency}, Conf: 0.90)")
+                            suggestions, referencia, maestro_confidence, "Maestro")
+                        print(f"    ✅ Maestro referencia: {referencia} (Frequency: {frequency}, Conf: {maestro_confidence})")
 
                         # Show match details for first occurrence
                         first_match = next(m for m in maestro_exact_matches if m['referencia'] == referencia)
@@ -2381,14 +2589,8 @@ class FixacarApp:
                         print(f"  ❌ No Maestro fallback matches found")
 
                 # --- Neural Network Prediction (Priority 2) ---
-                # Ensure vehicle details are strings for the NN model
-                predicted_series_val = self.vehicle_details.get('series', 'N/A')
-                if isinstance(predicted_series_val, np.ndarray) and predicted_series_val.size > 0:
-                    series_str_for_nn = str(predicted_series_val.item())
-                elif pd.notna(predicted_series_val):
-                    series_str_for_nn = str(predicted_series_val)
-                else:
-                    series_str_for_nn = "N/A"
+                # Use the already normalized series from above (consistent across all prediction sources)
+                series_str_for_nn = series  # This is already normalized
 
                 if maker != 'N/A' and model_str_scalar != 'N/A' and series_str_for_nn != 'N/A':
                     print(f"  🔄 Applying unified preprocessing for Neural Network input...")
@@ -2439,74 +2641,86 @@ class FixacarApp:
                     try:
                         # DUAL MATCHING STRATEGY: Search descripcion column with different text processing approaches
 
-                        # STEP 1A: Search normalized_descripcion column
-                        print(f"    Trying normalized_descripcion match: '{normalized_original}'")
+                        # DUAL MATCHING STRATEGY: Compare user input (original + normalized) against database descripcion
+                        print(f"    🔍 Dual matching strategy:")
+                        print(f"      User original: '{original_desc}'")
+                        print(f"      User normalized: '{normalized_original}'")
 
-                        # First try exact series match (CASE-INSENSITIVE)
+                        # STEP 1A: User original input vs Database descripcion (exact match)
+                        print(f"    Trying user original vs DB descripcion: '{original_desc}'")
                         cursor.execute("""
-                            SELECT referencia, COUNT(*) as frequency, 'normalized' as match_type
+                            SELECT referencia, COUNT(*) as frequency, 'original_vs_db' as match_type
                             FROM processed_consolidado
-                            WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(normalized_descripcion) = LOWER(?)
+                            WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(descripcion) = LOWER(?)
+                            AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
+                            GROUP BY referencia
+                            ORDER BY COUNT(*) DESC
+                        """, (maker, model, series, original_desc))
+                        original_vs_db_results = cursor.fetchall()
+
+                        # STEP 1B: User normalized input vs Database descripcion (normalized comparison)
+                        print(f"    Trying user normalized vs DB descripcion: '{normalized_original}'")
+                        cursor.execute("""
+                            SELECT referencia, COUNT(*) as frequency, 'normalized_vs_db' as match_type
+                            FROM processed_consolidado
+                            WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(descripcion) = LOWER(?)
+                            AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
                             GROUP BY referencia
                             ORDER BY COUNT(*) DESC
                         """, (maker, model, series, normalized_original))
-                        normalized_results = cursor.fetchall()
+                        normalized_vs_db_results = cursor.fetchall()
+
+                        # Combine results from both matching strategies
+                        all_exact_results = original_vs_db_results + normalized_vs_db_results
 
                         # If no exact series match, try fuzzy series matching (CASE-INSENSITIVE)
-                        if not normalized_results:
+                        if not all_exact_results:
                             print(f"    No exact series match for '{series}', trying fuzzy series matching...")
                             # Extract base series (remove brackets and extra info)
                             base_series = series.split('[')[0].strip() if '[' in series else series
 
+                            # Fuzzy match: User normalized vs DB descripcion
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'normalized_fuzzy' as match_type
                                 FROM processed_consolidado
                                 WHERE LOWER(maker) = LOWER(?) AND model = ?
                                 AND (LOWER(series) = LOWER(?) OR LOWER(series) LIKE LOWER(?) OR LOWER(series) LIKE LOWER(?))
-                                AND LOWER(normalized_descripcion) = LOWER(?)
+                                AND LOWER(descripcion) = LOWER(?)
+                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
                                 GROUP BY referencia
                                 ORDER BY COUNT(*) DESC
                             """, (maker, model, base_series, f"{base_series}%", f"%{base_series}%", normalized_original))
-                            normalized_results = cursor.fetchall()
-                            if normalized_results:
-                                print(f"    ✅ Found {len(normalized_results)} unique SKUs via FUZZY SERIES match (base: '{base_series}')")
+                            normalized_fuzzy_results = cursor.fetchall()
 
-                        # STEP 1B: Search descripcion column (original descriptions)
-                        print(f"    Trying descripcion match: '{original_desc}'")
-
-                        # First try exact series match (CASE-INSENSITIVE)
-                        cursor.execute("""
-                            SELECT referencia, COUNT(*) as frequency, 'original' as match_type
-                            FROM processed_consolidado
-                            WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(descripcion) = LOWER(?)
-                            GROUP BY referencia
-                            ORDER BY COUNT(*) DESC
-                        """, (maker, model, series, original_desc))
-                        original_results = cursor.fetchall()
-
-                        # If no exact series match, try fuzzy series matching (CASE-INSENSITIVE)
-                        if not original_results:
-                            # Extract base series (remove brackets and extra info)
-                            base_series = series.split('[')[0].strip() if '[' in series else series
-
+                            # Fuzzy match: User original vs DB descripcion
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'original_fuzzy' as match_type
                                 FROM processed_consolidado
                                 WHERE LOWER(maker) = LOWER(?) AND model = ?
                                 AND (LOWER(series) = LOWER(?) OR LOWER(series) LIKE LOWER(?) OR LOWER(series) LIKE LOWER(?))
                                 AND LOWER(descripcion) = LOWER(?)
+                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
                                 GROUP BY referencia
                                 ORDER BY COUNT(*) DESC
                             """, (maker, model, base_series, f"{base_series}%", f"%{base_series}%", original_desc))
-                            original_results = cursor.fetchall()
+                            original_fuzzy_results = cursor.fetchall()
 
-                        # STEP 1C: Merge and deduplicate results from both searches
-                        exact_results = self.merge_dual_search_results(normalized_results, original_results)
+                            # Combine fuzzy results and update all_exact_results for downstream processing
+                            all_fuzzy_results = normalized_fuzzy_results + original_fuzzy_results
+                            all_exact_results = all_fuzzy_results  # Use fuzzy results as fallback
+
+                            if all_fuzzy_results:
+                                print(f"    ✅ Found {len(all_fuzzy_results)} unique SKUs via FUZZY SERIES match (base: '{base_series}')")
+
+                        # Process the results from dual matching strategy
+                        exact_results = all_exact_results
 
                         if exact_results:
                             print(f"    ✅ Found {len(exact_results)} unique SKUs via EXACT match")
+                            # Convert 3-element tuples to 2-element tuples for consensus logic
+                            exact_results_for_consensus = [(referencia, frequency) for referencia, frequency, match_type in exact_results]
                             # Apply consensus logic to filter out minority/outlier SKUs
-                            consensus_skus = self.apply_consensus_logic(exact_results, min_consensus_ratio=0.6)
+                            consensus_skus = self.apply_consensus_logic(exact_results_for_consensus, min_consensus_ratio=0.6)
                             for referencia, frequency in consensus_skus:
                                 confidence = self.calculate_frequency_based_confidence(frequency, "DB-Exact")
                                 final_confidence = self._calculate_consensus_confidence(confidence, ["DB-Exact"])
@@ -2517,11 +2731,12 @@ class FixacarApp:
                         if not exact_results:
                             print(f"    No exact matches, trying abbreviated description: '{abbreviated_desc}'")
 
-                            # Search normalized_descripcion column with abbreviated description
+                            # Search descripcion column with abbreviated description
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'normalized_abbrev' as match_type
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(normalized_descripcion) = LOWER(?)
+                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(descripcion) = LOWER(?)
+                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
                                 GROUP BY referencia
                                 ORDER BY COUNT(*) DESC
                             """, (maker, model, series, abbreviated_desc))
@@ -2532,6 +2747,7 @@ class FixacarApp:
                                 SELECT referencia, COUNT(*) as frequency, 'original_abbrev' as match_type
                                 FROM processed_consolidado
                                 WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(descripcion) = LOWER(?)
+                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
                                 GROUP BY referencia
                                 ORDER BY COUNT(*) DESC
                             """, (maker, model, series, abbreviated_desc))
@@ -2549,7 +2765,8 @@ class FixacarApp:
                                     FROM processed_consolidado
                                     WHERE LOWER(maker) = LOWER(?) AND model = ?
                                     AND (LOWER(series) = LOWER(?) OR LOWER(series) LIKE LOWER(?) OR LOWER(series) LIKE LOWER(?))
-                                    AND LOWER(normalized_descripcion) = LOWER(?)
+                                    AND LOWER(descripcion) = LOWER(?)
+                                    AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
                                     GROUP BY referencia
                                     ORDER BY COUNT(*) DESC
                                 """, (maker, model, base_series, f"{base_series}%", f"%{base_series}%", abbreviated_desc))
@@ -2562,6 +2779,7 @@ class FixacarApp:
                                     WHERE LOWER(maker) = LOWER(?) AND model = ?
                                     AND (LOWER(series) = LOWER(?) OR LOWER(series) LIKE LOWER(?) OR LOWER(series) LIKE LOWER(?))
                                     AND LOWER(descripcion) = LOWER(?)
+                                    AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
                                     GROUP BY referencia
                                     ORDER BY COUNT(*) DESC
                                 """, (maker, model, base_series, f"{base_series}%", f"%{base_series}%", abbreviated_desc))
@@ -2575,8 +2793,10 @@ class FixacarApp:
                         if results:
                             print(f"    Found {len(results)} unique SKUs in DB-Exact")
 
+                            # Convert 3-element tuples to 2-element tuples for consensus logic
+                            results_for_consensus = [(referencia, frequency) for referencia, frequency, match_type in results]
                             # Apply consensus logic to filter out minority/outlier SKUs
-                            consensus_skus = self.apply_consensus_logic(results, min_consensus_ratio=0.6)
+                            consensus_skus = self.apply_consensus_logic(results_for_consensus, min_consensus_ratio=0.6)
 
                             # Process consensus SKUs with frequency-based confidence
                             for referencia, frequency in consensus_skus:
@@ -2593,11 +2813,12 @@ class FixacarApp:
                         if not suggestions:
                             print("    No exact series match, trying fuzzy series matching with abbreviated description...")
 
-                            # Search normalized_descripcion with fuzzy series
+                            # Search descripcion with fuzzy series
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'normalized_fuzzy' as match_type
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(normalized_descripcion) = LOWER(?)
+                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(descripcion) = LOWER(?)
+                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
                                 GROUP BY referencia
                                 ORDER BY COUNT(*) DESC
                             """, (maker, model, f'%{series}%', abbreviated_desc))
@@ -2608,6 +2829,7 @@ class FixacarApp:
                                 SELECT referencia, COUNT(*) as frequency, 'original_fuzzy' as match_type
                                 FROM processed_consolidado
                                 WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(descripcion) = LOWER(?)
+                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
                                 GROUP BY referencia
                                 ORDER BY COUNT(*) DESC
                             """, (maker, model, f'%{series}%', abbreviated_desc))
@@ -2642,6 +2864,7 @@ class FixacarApp:
                                 SELECT referencia, COUNT(*) as frequency, 'normalized_fuzzy_orig' as match_type
                                 FROM processed_consolidado
                                 WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(descripcion) = LOWER(?)
+                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
                                 GROUP BY referencia
                             """, (maker, model, f'%{series}%', normalized_original))
                             normalized_orig_results = cursor.fetchall()
@@ -2651,6 +2874,7 @@ class FixacarApp:
                                 SELECT referencia, COUNT(*) as frequency, 'original_fuzzy_orig' as match_type
                                 FROM processed_consolidado
                                 WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(descripcion) = LOWER(?)
+                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
                                 GROUP BY referencia
                             """, (maker, model, f'%{series}%', original_desc))
                             original_orig_results = cursor.fetchall()
@@ -2671,11 +2895,12 @@ class FixacarApp:
                         if not suggestions:
                             print("    No match with original description, trying fuzzy series matching with expanded description...")
 
-                            # Search normalized_descripcion
+                            # Search descripcion
                             cursor.execute("""
                                 SELECT referencia, COUNT(*) as frequency, 'normalized_fuzzy_exp' as match_type
                                 FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(normalized_descripcion) = LOWER(?)
+                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(descripcion) = LOWER(?)
+                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
                                 GROUP BY referencia
                             """, (maker, model, f'%{series}%', normalized_expanded))
                             normalized_exp_results = cursor.fetchall()
@@ -2685,6 +2910,7 @@ class FixacarApp:
                                 SELECT referencia, COUNT(*) as frequency, 'original_fuzzy_exp' as match_type
                                 FROM processed_consolidado
                                 WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(descripcion) = LOWER(?)
+                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
                                 GROUP BY referencia
                             """, (maker, model, f'%{series}%', expanded_desc))
                             original_exp_results = cursor.fetchall()
@@ -2720,6 +2946,7 @@ class FixacarApp:
                             SELECT referencia, descripcion, COUNT(*) as frequency
                             FROM processed_consolidado
                             WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?)
+                            AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
                             GROUP BY referencia, descripcion
                             ORDER BY frequency DESC
                         """, (maker, model, series))
@@ -2755,6 +2982,7 @@ class FixacarApp:
                                 SELECT referencia, descripcion, COUNT(*) as frequency
                                 FROM processed_consolidado
                                 WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?)
+                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
                                 GROUP BY referencia, descripcion
                                 ORDER BY frequency DESC
                             """, (maker, model, f'%{series}%'))

@@ -10,6 +10,7 @@ import sys
 import sqlite3
 import joblib
 import time
+import glob
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -57,6 +58,57 @@ ADAPTIVE_BATCH_SIZE = True  # Enable adaptive batch sizing
 VIN_BATCH_SIZE = 5000  # Process VINs in larger batches for full dataset
 # Set to a number (e.g., 50000) to use a subset of data, or None for all data
 SAMPLE_SIZE = None  # Using full dataset for production training
+
+def cleanup_old_model_checkpoints(model_dir, keep_latest=3):
+    """
+    Clean up old model checkpoint files, keeping only the latest N versions.
+
+    Args:
+        model_dir: Directory containing model files
+        keep_latest: Number of latest timestamped models to keep (default: 3)
+    """
+    try:
+        # Find all timestamped model files
+        pattern = os.path.join(model_dir, "sku_nn_model_pytorch_optimized_*.pth")
+        model_files = glob.glob(pattern)
+
+        # Exclude the default model file (without timestamp)
+        default_model = os.path.join(model_dir, "sku_nn_model_pytorch_optimized.pth")
+        model_files = [f for f in model_files if f != default_model]
+
+        if len(model_files) <= keep_latest:
+            print(f"  Model cleanup: {len(model_files)} checkpoint files found, keeping all")
+            return
+
+        # Sort by modification time (newest first)
+        model_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+
+        # Keep the latest N files, delete the rest
+        files_to_keep = model_files[:keep_latest]
+        files_to_delete = model_files[keep_latest:]
+
+        print(f"  Model cleanup: Found {len(model_files)} checkpoint files")
+        print(f"  Keeping latest {keep_latest}: {[os.path.basename(f) for f in files_to_keep]}")
+        print(f"  Deleting {len(files_to_delete)} old checkpoints...")
+
+        deleted_count = 0
+        total_size_saved = 0
+        for file_path in files_to_delete:
+            try:
+                file_size = os.path.getsize(file_path)
+                os.remove(file_path)
+                deleted_count += 1
+                total_size_saved += file_size
+                print(f"    Deleted: {os.path.basename(file_path)}")
+            except Exception as e:
+                print(f"    Warning: Could not delete {os.path.basename(file_path)}: {e}")
+
+        if deleted_count > 0:
+            size_mb = total_size_saved / (1024 * 1024)
+            print(f"  ✅ Cleanup complete: Deleted {deleted_count} files, saved {size_mb:.1f} MB")
+
+    except Exception as e:
+        print(f"  Warning: Model cleanup failed: {e}")
 
 # --- Training Mode Configuration ---
 import argparse
@@ -713,6 +765,9 @@ if __name__ == "__main__":
                     print(f"  Saved best model to {model_path}")
                     print(
                         f"  Also saved as default model: {default_model_path}")
+
+                    # Clean up old model checkpoints to save disk space
+                    cleanup_old_model_checkpoints(SKU_NN_MODEL_DIR, keep_latest=3)
                 else:
                     patience_counter += 1
                     if patience_counter >= patience:

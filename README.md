@@ -145,3 +145,90 @@ The application uses a multi-layered architecture:
 - **Parallel Processing**: Multi-threaded predictions
 - **Text Optimization**: Advanced Spanish text normalization
 - **Database Optimization**: Indexed queries and connection pooling
+
+## 🆕 Recent Improvements (v2.1)
+
+### 🎯 Confidence Scoring Enhancements
+- **Database Frequency-Based Confidence**: 20+ occurrences now yield 80% confidence
+- **Improved Scaling**: Better confidence distribution for 1-19 occurrences
+- **Consensus Logic**: Enhanced multi-source agreement scoring
+
+### 🔄 Series Normalization System
+- **Hybrid Approach**: Two-phase normalization (preprocessing + runtime)
+- **Phase 1**: Series normalization during Consolidado.json processing
+- **Phase 2**: Runtime normalization with fallback to fuzzy matching
+- **Configuration**: Series tab in Text_Processing_Rules.xlsx for custom mappings
+
+### 🧹 Model File Management
+- **Automatic Cleanup**: Training script now keeps only latest 3 model checkpoints
+- **Disk Space Savings**: Prevents accumulation of 100+ checkpoint files (saves ~1GB)
+- **Standalone Cleanup Tool**: `scripts/cleanup_model_checkpoints.py` for manual cleanup
+
+### ⚡ Database Connection Optimization
+- **WAL Mode**: Write-Ahead Logging for better concurrent access
+- **Memory Optimization**: 10MB cache, memory-based temp tables
+- **Memory Mapping**: 256MB memory map for faster I/O
+- **Connection Management**: Proper cleanup and error handling
+
+### 📝 Text Processing Improvements
+- **Unified Loading**: All text processing rules loaded from single Excel file
+- **Series Support**: Added series normalization to text processing pipeline
+- **Enhanced Logging**: Better debugging output for normalization steps
+- **Error Handling**: Graceful fallbacks when rules files are missing
+
+## 🛠️ Configuration Files
+
+### Text_Processing_Rules.xlsx Structure
+```
+📊 Text_Processing_Rules.xlsx
+├── 📋 Equivalencias     # Industry-specific synonyms
+├── 📋 Abbreviations     # Common abbreviations and expansions
+├── 📋 User_Corrections  # User-guided corrections
+└── 📋 Series           # Series normalization mappings
+```
+
+### Series Normalization Format
+The Series tab supports flexible mapping formats:
+- **Simple**: `CX-30 | CX30 | CX 30` (first column is canonical)
+- **Maker-Specific**: `MAZDA/CX-30 (DM)/BASICO | MAZDA/CX30 | MAZDA/CX 30`
+- **Generic**: `*` prefix for cross-maker mappings
+
+## 🔧 Maintenance Tools
+
+### Model Cleanup
+```bash
+# Dry run to see what would be deleted
+python scripts/cleanup_model_checkpoints.py --dry-run
+
+# Clean up old checkpoints (keep latest 3)
+python scripts/cleanup_model_checkpoints.py
+
+# Custom retention
+python scripts/cleanup_model_checkpoints.py --keep 5
+```
+
+### Database Optimization
+The application now automatically applies SQLite optimizations:
+- WAL mode for concurrent access
+- Increased cache size (10MB)
+- Memory-based temporary storage
+- Memory mapping for large databases
+
+## 📈 Performance Metrics
+
+### Confidence Scoring Distribution
+- **1 occurrence**: 30% confidence (likely errors)
+- **2-4 occurrences**: 40-45% confidence
+- **5-9 occurrences**: 50-60% confidence
+- **10-19 occurrences**: 60-70% confidence
+- **20+ occurrences**: 80% confidence (high reliability)
+
+### Series Normalization Coverage
+- **Phase 1**: Handles obvious cases during data preprocessing
+- **Phase 2**: Runtime normalization for edge cases
+- **Fallback**: Existing fuzzy matching for unhandled variations
+
+### Disk Space Optimization
+- **Before**: 100+ model checkpoints (~1GB wasted space)
+- **After**: 3 latest checkpoints (~25MB total)
+- **Savings**: ~975MB per training cycle
