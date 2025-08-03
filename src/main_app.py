@@ -37,30 +37,61 @@ except ImportError as e:
     print(f"⚠️ Performance improvements not available: {e}")
     PERFORMANCE_IMPROVEMENTS_AVAILABLE = False
 # Import our PyTorch model implementation
+# Handle PyInstaller bundled imports
+def setup_imports():
+    """Setup imports for both development and PyInstaller environments."""
+    import sys
+    import os
+
+    # Check if running in PyInstaller bundle
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        # Running in PyInstaller bundle
+        bundle_dir = sys._MEIPASS
+        src_path = bundle_dir
+    else:
+        # Running in development
+        src_path = os.path.dirname(os.path.abspath(__file__))
+
+    # Add src path to sys.path if not already there
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+
+# Setup imports
+setup_imports()
+
+# Now import the modules
 try:
-    # Try relative imports first (for PyInstaller)
     from models.sku_nn_pytorch import load_model, predict_sku
     from utils.text_utils import normalize_text
     from utils.dummy_tokenizer import DummyTokenizer
     from train_vin_predictor import extract_vin_features_production, decode_year
-except ImportError:
+except ImportError as e:
+    print(f"Import error: {e}")
+    # Try importing from current directory
+    import sys
+    import os
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(0, current_dir)
+
     try:
-        # Fallback for package execution
-        from .models.sku_nn_pytorch import load_model, predict_sku
-        from .utils.text_utils import normalize_text
-        from .utils.dummy_tokenizer import DummyTokenizer
-        from .train_vin_predictor import extract_vin_features_production, decode_year
-    except ImportError:
-        # Final fallback - add src to path and try again
-        import sys
-        import os
-        src_path = os.path.dirname(os.path.abspath(__file__))
-        if src_path not in sys.path:
-            sys.path.insert(0, src_path)
         from models.sku_nn_pytorch import load_model, predict_sku
         from utils.text_utils import normalize_text
         from utils.dummy_tokenizer import DummyTokenizer
         from train_vin_predictor import extract_vin_features_production, decode_year
+    except ImportError as e2:
+        print(f"Second import error: {e2}")
+        # Last resort - try absolute imports
+        import models.sku_nn_pytorch as sku_nn
+        import utils.text_utils as text_utils
+        import utils.dummy_tokenizer as dummy_tokenizer
+        import train_vin_predictor as vin_predictor
+
+        load_model = sku_nn.load_model
+        predict_sku = sku_nn.predict_sku
+        normalize_text = text_utils.normalize_text
+        DummyTokenizer = dummy_tokenizer.DummyTokenizer
+        extract_vin_features_production = vin_predictor.extract_vin_features_production
+        decode_year = vin_predictor.decode_year
 
 import sys
 
