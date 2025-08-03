@@ -103,13 +103,13 @@ def load_model(model_dir):
     encoders = {}
     try:
         encoders['Make'] = joblib.load(
-            os.path.join(model_dir, 'encoder_Make.joblib'))
+            os.path.join(model_dir, 'encoder_maker.joblib'))
         encoders['Model Year'] = joblib.load(
-            os.path.join(model_dir, 'encoder_Model Year.joblib'))
+            os.path.join(model_dir, 'encoder_model.joblib'))
         encoders['Series'] = joblib.load(
-            os.path.join(model_dir, 'encoder_Series.joblib'))
+            os.path.join(model_dir, 'encoder_series.joblib'))
         encoders['sku'] = joblib.load(
-            os.path.join(model_dir, 'encoder_sku.joblib'))
+            os.path.join(model_dir, 'encoder_referencia.joblib'))
 
         # Try to load the tokenizer, but use a dummy one if it fails
         try:

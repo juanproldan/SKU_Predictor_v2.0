@@ -24,8 +24,8 @@ def get_base_path():
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 BASE_PATH = get_base_path()
-CONSOLIDADO_DB_PATH = os.path.join(BASE_PATH, "Source_Files", "processed_consolidado.db")
-MODEL_OUTPUT_DIR = os.path.join(BASE_PATH, "models")
+CONSOLIDADO_DB_PATH = os.path.join(BASE_PATH, "Fixacar_SKU_Predictor_CLIENT", "Source_Files", "processed_consolidado.db")
+MODEL_OUTPUT_DIR = os.path.join(BASE_PATH, "Fixacar_SKU_Predictor_CLIENT", "models")
 # Define minimum frequency for a category to be considered (helps with rare makes/series)
 MIN_CATEGORY_FREQUENCY = 5
 
@@ -102,8 +102,9 @@ def clean_vin_for_training(vin):
             return None
 
     # Additional structural validation
-    # Position 9 should be a check digit (0-9 or X)
-    if vin_str[8] not in '0123456789X':
+    # Position 9 should be a check digit (0-9, A-Z per VIN standard)
+    # Note: Some VINs use letters other than X in position 9
+    if not re.match(r'[0-9A-Z]', vin_str[8]):
         return None
 
     # Position 10 (year code) should be valid year character
@@ -182,6 +183,10 @@ def extract_vin_features_production(vin):
         # Positions 4-9 (including check digit sometimes used)
         'vds_full': cleaned_vin[3:9]
     }
+
+    # Decode the year from year_code
+    features['year'] = decode_year(features['year_code'])
+
     return features
 
 
@@ -481,13 +486,13 @@ def train_and_save_models(df):
     accuracy = accuracy_score(y_test, y_pred)
     print(f"Maker Model Accuracy: {accuracy:.4f}")
 
-    # Save model and encoders
+    # Save model and encoders (FIXED NAMING)
     joblib.dump(model_maker, os.path.join(
-        MODEL_OUTPUT_DIR, 'makerr_model.joblib'))
+        MODEL_OUTPUT_DIR, 'maker_model.joblib'))
     joblib.dump(encoder_x_maker, os.path.join(
-        MODEL_OUTPUT_DIR, 'makerr_encoder_x.joblib'))
+        MODEL_OUTPUT_DIR, 'maker_encoder_x.joblib'))
     joblib.dump(encoder_y_maker, os.path.join(
-        MODEL_OUTPUT_DIR, 'makerr_encoder_y.joblib'))
+        MODEL_OUTPUT_DIR, 'maker_encoder_y.joblib'))
     print("Maker model and encoders saved.")
 
     # Train PyTorch model for Maker

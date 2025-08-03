@@ -1,0 +1,11 @@
+# SKU Predictor Logging Configuration
+# Generated automatically by set_logging_level.py
+# Date: set_logging_level.py
+
+# Current logging level: MINIMAL
+# Description: Errors and critical information
+
+# This file is used by the application to determine the logging level
+# You can also set the environment variable SKU_PREDICTOR_LOG_LEVEL instead
+
+LOGGING_LEVEL=MINIMAL

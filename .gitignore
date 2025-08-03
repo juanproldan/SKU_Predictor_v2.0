@@ -152,8 +152,13 @@ models/*/*.pt
 models/*/*.bin
 models/*/*.onnx
 
-# Exclude large source files
-Source_Files/
+# Exclude large source files but allow important config files
+Source_Files/Consolidado*.json
+Source_Files/processed_consolidado.db
+Source_Files/*.db
+# Allow important manually maintained files
+!Source_Files/Text_Processing_Rules.xlsx
+!Source_Files/Maestro.xlsx
 
 # Exclude virtual environments
 venv_tf/
@@ -175,8 +180,12 @@ Fixacar_Deployment_Package.zip
 # Exclude large data files
 *.csv
 *.json
+# Exclude Excel files except important config files
 *.xlsx
 *.xls
+# Allow important manually maintained Excel files
+!Text_Processing_Rules.xlsx
+!Maestro.xlsx
 
 # Exclude model and ML files
 *.joblib
@@ -197,6 +206,11 @@ Fixacar_Deployment_Package.zip
 # Other potentially large files or sensitive info
 # credentials.json
 # api_keys.txt
+
+# Performance improvements cache files (but track the code)
+src/utils/performance_improvements/cache/*.cache
+src/utils/performance_improvements/cache/*.db
+src/utils/performance_improvements/cache/__pycache__/
 
 # Playwright
 node_modules/

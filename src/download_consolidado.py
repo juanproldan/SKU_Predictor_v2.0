@@ -24,7 +24,15 @@ import tempfile
 
 # Configuration
 CONSOLIDADO_URL = "https://fixacar-public-prod.s3.amazonaws.com/reportes/Consolidado.json"
-TARGET_DIR = r"C:\Users\juanp\Documents\Python\0_Training\017_Fixacar\010_SKU_Predictor_v2.0\Source_Files"
+# Use relative path for client deployment - always download to Source_Files relative to executable location
+if getattr(sys, 'frozen', False):
+    # Running as PyInstaller executable - executable is in client folder root
+    TARGET_DIR = os.path.join(os.path.dirname(sys.executable), "Source_Files")
+else:
+    # Running as Python script - for development/testing, use project structure
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)  # Go up from src/ to project root
+    TARGET_DIR = os.path.join(project_root, "Fixacar_SKU_Predictor_CLIENT", "Source_Files")
 BACKUP_ENABLED = False
 TIMEOUT_SECONDS = 300  # 5 minutes timeout
 CHUNK_SIZE = 8192  # 8KB chunks for download

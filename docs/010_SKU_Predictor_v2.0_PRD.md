@@ -2,7 +2,7 @@
 
 **Document Title:** Fixacar SKU Finder Application v2.0
 
-**Version:** 2.3 (VIN Year Prediction Fix - Production Ready)
+**Version:** 2.4 (Critical Bug Fixes - Fully Functional)
 
 **Date:** July 29, 2025
 
@@ -344,7 +344,7 @@
     * ✅ **`New_Data.db`**: Incremental data database
     * ✅ **`Processed_Data.db`**: Enhanced data with prediction columns
     * ✅ **Prediction Model Files**: Multiple trained models
-      - **VIN Models**: `makerr_model.joblib`, `model_model.joblib`, `series_model.joblib`
+      - **VIN Models**: `maker_model.joblib`, `model_model.joblib`, `series_model.joblib`
       - **SKU Neural Network**: `sku_nn_model_pytorch_optimized.pth`
       - **Encoders**: Label encoders and tokenizers for data preprocessing
 
@@ -375,18 +375,19 @@
 
     * ✅ **`Maestro.xlsx` Schema** (UPDATED - Standardized):
       - **Core columns**: `Maestro_ID`, `maker`, `model_Min`, `model_Max`, `series`
-      - **Description columns**: `original_descripcion`, `normalized_descripcion`
+      - **Description columns**: `descripcion` (original), `normalized_descripcion` (processed)
       - **SKU columns**: `referencia`, `Confidence`, `Source`, `Date_Added`
       - **REMOVED deprecated columns**: `VIN_Model`, `VIN_BodyStyle`, `Equivalencia_Row_ID`
       - **Data types**: Integers saved as integers, proper type handling
 
-    * ✅ **`fixacar_history.db` Schema** (`historical_parts` table):
-      - **Primary key**: `id` (INTEGER PRIMARY KEY AUTOINCREMENT)
-      - **VIN fields**: `vin_number`, `maker`, `vin_model`, `model`, `series`, `vin_bodystyle`
-      - **Description fields**: `original_descripcion`, `normalized_descripcion`
+    * ✅ **`processed_consolidado.db` Schema** (`processed_consolidado` table) - **UPDATED v2.1**:
+      - **Primary key**: Composite unique constraint on `(vin_number, descripcion, referencia)`
+      - **VIN fields**: `vin_number`, `maker`, `model`, `series` (for VIN training)
+      - **Description fields**:
+        - `descripcion`: Original text from consolidado.json
+        - `normalized_descripcion`: Processed by unified_text_preprocessing()
       - **SKU field**: `referencia` (TEXT)
-      - **Linking field**: `Equivalencia_Row_ID` (INTEGER, nullable)
-      - **Metadata**: `source_bid_id`, `date`
+      - **REMOVED**: `original_descripcion` column (simplified to 2-column approach)
 
     * ✅ **`New_Data.db` Schema**:
       - **Structure**: Identical to `fixacar_history.db`
@@ -863,6 +864,19 @@ Fixacar_Deployment_Package/
     ├── "CX30" → "%CX30%" (matches "CX-30", "CX 30")
     └── Essential for vehicle compatibility
 ```
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 2.0.0 | 2025-07-25 | Initial PRD for SKU Predictor v2.0 |
+| 2.1.0 | 2025-07-26 | Added performance optimizations and field name standardization |
+| 2.2.0 | 2025-07-27 | Enhanced text processing and fuzzy matching improvements |
+| 2.3.0 | 2025-07-28 | VIN year prediction fixes and production readiness |
+| 2.4.0 | 2025-07-29 | **CRITICAL BUG FIXES - FULLY FUNCTIONAL**: Fixed VIN prediction fallback strategy, resolved database tuple unpacking errors, added comprehensive NULL filtering, enhanced error handling. All critical issues resolved - application now fully operational |
+| 2.5.0 | 2025-08-02 | **DATABASE OPTIMIZATION & SCHEMA SIMPLIFICATION**: Reduced database match threshold from 20 to 10 repetitions, simplified schema to 2 columns (descripcion + normalized_descripcion), fixed abbreviation processing with regex splitting, updated confidence scoring and consensus logic |
 
 ---
 

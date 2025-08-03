@@ -15,7 +15,10 @@ import pandas as pd
 class OptimizedDataLoader:
     """Optimized data loading with caching and lazy loading"""
     
-    def __init__(self, cache_dir: str = "performance_improvements/cache"):
+    def __init__(self, cache_dir: str = None):
+        if cache_dir is None:
+            # Use utils/performance_improvements/cache as default
+            cache_dir = os.path.join(os.path.dirname(__file__), "performance_improvements", "cache")
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._cache = {}
@@ -174,7 +177,10 @@ class LazySpacyLoader:
 class OptimizedModelLoader:
     """Optimized model loading with compression and caching"""
     
-    def __init__(self, cache_dir: str = "performance_improvements/cache"):
+    def __init__(self, cache_dir: str = None):
+        if cache_dir is None:
+            # Use utils/performance_improvements/cache as default
+            cache_dir = os.path.join(os.path.dirname(__file__), "performance_improvements", "cache")
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._models = {}

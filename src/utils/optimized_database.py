@@ -173,12 +173,12 @@ class OptimizedDatabase:
                 predictions = []
                 for row in results:
                     frequency = row[1]
-                    # Frequency-based confidence
-                    if frequency >= 20:
+                    # Frequency-based confidence (reduced threshold from 20 to 10)
+                    if frequency >= 10:
                         confidence = 0.8
-                    elif frequency >= 10:
-                        confidence = 0.6
                     elif frequency >= 5:
+                        confidence = 0.6
+                    elif frequency >= 3:
                         confidence = 0.5
                     else:
                         confidence = 0.4
@@ -211,12 +211,12 @@ class OptimizedDatabase:
         predictions = []
         for row in results:
             frequency = row[1]
-            # Frequency-based confidence
-            if frequency >= 20:
+            # Frequency-based confidence (reduced threshold from 20 to 10)
+            if frequency >= 10:
                 confidence = 0.8
-            elif frequency >= 10:
-                confidence = 0.6
             elif frequency >= 5:
+                confidence = 0.6
+            elif frequency >= 3:
                 confidence = 0.5
             else:
                 confidence = 0.4

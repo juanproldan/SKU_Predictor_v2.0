@@ -59,6 +59,7 @@ class SpacyTextProcessor:
         
         # Gender exceptions for automotive parts (overrides spaCy's default gender detection)
         self.automotive_exceptions = {
+            # Masculine exceptions
             'emblema': 'MASC',      # el emblema (not la emblema)
             'portaplaca': 'MASC',   # el portaplaca (not la portaplaca)
             'stop': 'MASC',         # el stop (not la stop)
@@ -71,14 +72,24 @@ class SpacyTextProcessor:
             'parabrisas': 'MASC',   # el parabrisas
             'espejo': 'MASC',       # el espejo
             'retrovisor': 'MASC',   # el retrovisor
+            'paragolpes': 'MASC',   # el paragolpes
+            'absorbedor': 'MASC',   # el absorbedor
+            'electroventilador': 'MASC',  # el electroventilador
+            'radiador': 'MASC',     # el radiador
+
+            # Feminine exceptions
+            'puerta': 'FEM',        # la puerta
+            'luz': 'FEM',           # la luz
+            'antiniebla': 'FEM',    # la antiniebla
         }
         
         # Automotive abbreviations with context
         self.automotive_abbreviations = {
             'del': 'delantero',
-            'tras': 'trasero', 
+            'tras': 'trasero',
             'der': 'derecho',
             'izq': 'izquierdo',
+            'i': 'izquierda',  # Single letter abbreviation for izquierda
             'sup': 'superior',
             'inf': 'inferior',
             'ant': 'anterior',
@@ -216,7 +227,11 @@ class SpacyTextProcessor:
     
     def _find_governing_noun(self, adjective_token, doc):
         """
-        Find the noun that this adjective modifies using spaCy's dependency parsing.
+        Find the noun that this adjective modifies using automotive-specific logic.
+
+        For automotive parts, the main part (usually the second noun) determines gender:
+        - "VIDRIO PUERTA" → "puerta" determines gender (feminine)
+        - "FARO DELANTERO" → "faro" determines gender (masculine)
         """
         # Check if the adjective directly modifies a noun or proper noun
         if adjective_token.head.pos_ in ["NOUN", "PROPN"]:
@@ -225,17 +240,46 @@ class SpacyTextProcessor:
         # Look for nearby nouns (within 3 positions)
         adj_index = adjective_token.i
 
-        # Check preceding nouns first (Spanish: noun + adjective)
+        # Collect all nearby nouns
+        nearby_nouns = []
+
+        # Check preceding nouns (Spanish: noun + adjective)
         for i in range(max(0, adj_index - 3), adj_index):
-            if doc[i].pos_ in ["NOUN", "PROPN"]:  # Include proper nouns
-                return doc[i]
+            if doc[i].pos_ in ["NOUN", "PROPN"]:
+                nearby_nouns.append(doc[i])
 
         # Check following nouns (less common but possible)
         for i in range(adj_index + 1, min(len(doc), adj_index + 4)):
-            if doc[i].pos_ in ["NOUN", "PROPN"]:  # Include proper nouns
-                return doc[i]
+            if doc[i].pos_ in ["NOUN", "PROPN"]:
+                nearby_nouns.append(doc[i])
 
-        return None
+        if not nearby_nouns:
+            return None
+
+        # Automotive-specific logic: prefer the main part noun
+        # For compound parts like "VIDRIO PUERTA", "PUERTA" is the main part
+        main_part_nouns = []
+        material_nouns = []
+
+        for noun in nearby_nouns:
+            noun_text = noun.text.lower()
+            # Material/component nouns (usually modifiers)
+            if noun_text in ['vidrio', 'cristal', 'plastico', 'metal', 'goma', 'caucho']:
+                material_nouns.append(noun)
+            else:
+                # Main part nouns (determine gender)
+                main_part_nouns.append(noun)
+
+        # Prefer main part nouns over material nouns
+        if main_part_nouns:
+            # Return the closest main part noun
+            return min(main_part_nouns, key=lambda n: abs(n.i - adj_index))
+        elif material_nouns:
+            # Fallback to material nouns if no main part found
+            return min(material_nouns, key=lambda n: abs(n.i - adj_index))
+        else:
+            # Fallback to closest noun
+            return min(nearby_nouns, key=lambda n: abs(n.i - adj_index))
     
     def _get_noun_gender(self, noun_token) -> str:
         """
@@ -295,10 +339,25 @@ class SpacyTextProcessor:
         """Final text cleanup and normalization."""
         # Remove extra punctuation
         text = re.sub(r'[^\w\s]', '', text)
-        
+
+        # Remove common Spanish prepositions that don't add meaning in automotive contexts
+        # Split into words, filter out prepositions, rejoin
+        words = text.split()
+        filtered_words = []
+
+        spanish_prepositions = {'de', 'del', 'la', 'el', 'los', 'las', 'y', 'con', 'sin', 'para', 'por'}
+
+        for word in words:
+            word_lower = word.lower()
+            # Keep the word if it's not a preposition or if it's the only word
+            if word_lower not in spanish_prepositions or len(words) == 1:
+                filtered_words.append(word)
+
+        text = ' '.join(filtered_words)
+
         # Normalize whitespace
         text = re.sub(r'\s+', ' ', text).strip()
-        
+
         return text
     
     def get_processing_stats(self) -> Dict[str, int]:

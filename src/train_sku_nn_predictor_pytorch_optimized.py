@@ -34,17 +34,19 @@ except ImportError:
 def get_base_path():
     """Get the base path for the application, works for both script and executable."""
     if getattr(sys, 'frozen', False):
-        # Running as executable
+        # Running as executable - executable is in client folder root
         return os.path.dirname(sys.executable)
     else:
-        # Running as script
-        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # Running as script - script is in src/, need to find client folder
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(script_dir)  # Go up from src/ to project root
+        return os.path.join(project_root, "Fixacar_SKU_Predictor_CLIENT")
 
 BASE_PATH = get_base_path()
-DB_PATH = os.path.join(BASE_PATH, "Source_Files", "processed_consolidado.db")
-MAESTRO_PATH = os.path.join(BASE_PATH, "Source_Files", "Maestro.xlsx")  # Optional, if it contains useful data
-VIN_MODEL_DIR = os.path.join(BASE_PATH, "models")  # Directory for VIN detail predictor models
-SKU_NN_MODEL_DIR = os.path.join(BASE_PATH, "models", "sku_nn")  # Directory for SKU NN model and preprocessors
+DB_PATH = os.path.join(BASE_PATH, "Fixacar_SKU_Predictor_CLIENT", "Source_Files", "processed_consolidado.db")
+MAESTRO_PATH = os.path.join(BASE_PATH, "Fixacar_SKU_Predictor_CLIENT", "Source_Files", "Maestro.xlsx")  # Optional, if it contains useful data
+VIN_MODEL_DIR = os.path.join(BASE_PATH, "Fixacar_SKU_Predictor_CLIENT", "models")  # Directory for VIN detail predictor models
+SKU_NN_MODEL_DIR = os.path.join(BASE_PATH, "Fixacar_SKU_Predictor_CLIENT", "models", "sku_nn")  # Directory for SKU NN model and preprocessors
 MIN_SKU_FREQUENCY = 3  # Minimum times an SKU must appear to be included in training
 VOCAB_SIZE = 10000  # Max number of words to keep in the vocabulary
 MAX_SEQUENCE_LENGTH = 30  # Reduced from 50 to 30
@@ -117,12 +119,12 @@ TRAINING_MODE = "full"  # Default to full training, can be overridden by command
 # --- Load VIN Predictor Models ---
 try:
     from train_vin_predictor import extract_vin_features_production
-    model_makerr = joblib.load(os.path.join(
-        VIN_MODEL_DIR, 'makerr_model.joblib'))
-    encoder_x_makerr = joblib.load(os.path.join(
-        VIN_MODEL_DIR, 'makerr_encoder_x.joblib'))
-    encoder_y_makerr = joblib.load(os.path.join(
-        VIN_MODEL_DIR, 'makerr_encoder_y.joblib'))
+    model_maker = joblib.load(os.path.join(
+        VIN_MODEL_DIR, 'maker_model.joblib'))
+    encoder_x_maker = joblib.load(os.path.join(
+        VIN_MODEL_DIR, 'maker_encoder_x.joblib'))
+    encoder_y_maker = joblib.load(os.path.join(
+        VIN_MODEL_DIR, 'maker_encoder_y.joblib'))
 
     model_model = joblib.load(os.path.join(
         VIN_MODEL_DIR, 'model_model.joblib'))
@@ -141,12 +143,12 @@ try:
 except Exception as e:
     print(
         f"Error loading VIN detail prediction models: {e}. This script cannot proceed without them.")
-    model_makerr = None  # Ensure it's None so script can exit if needed
+    model_maker = None  # Ensure it's None so script can exit if needed
 
 
 def predict_vin_details_batch(vins):
     """Process VIN predictions in batches for better performance."""
-    if not model_makerr or not model_model or not model_series:
+    if not model_maker or not model_model or not model_series:
         return [{"maker": "N/A", "model": "N/A", "series": "N/A"} for _ in vins]
 
     results = []
@@ -162,11 +164,11 @@ def predict_vin_details_batch(vins):
             # Predict Make - Use DataFrame with proper column names
             import pandas as pd
             wmi_df = pd.DataFrame([[features['wmi']]], columns=['wmi'])
-            wmi_encoded = encoder_x_makerr.transform(wmi_df)
+            wmi_encoded = encoder_x_maker.transform(wmi_df)
             if -1 not in wmi_encoded:
-                pred_encoded = model_makerr.predict(wmi_encoded)
+                pred_encoded = model_maker.predict(wmi_encoded)
                 if pred_encoded[0] != -1:
-                    details['maker'] = encoder_y_makerr.inverse_transform(
+                    details['maker'] = encoder_y_maker.inverse_transform(
                         pred_encoded.reshape(-1, 1))[0]
 
             # Predict Model Year - Use DataFrame with proper column names
@@ -226,7 +228,7 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
         recent_limit = max(1000, int(total_count * 0.02))  # At least 1000 records
 
         query = f"""
-        SELECT vin_number, descripcion, referencia
+        SELECT vin_number, descripcion, normalized_descripcion, referencia
         FROM processed_consolidado
         WHERE referencia IS NOT NULL
         ORDER BY ROWID DESC
@@ -239,9 +241,9 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
 
         # Optionally limit the data size for faster testing
         if SAMPLE_SIZE:
-            query = f"SELECT vin_number, descripcion, referencia FROM processed_consolidado WHERE referencia IS NOT NULL LIMIT {SAMPLE_SIZE}"
+            query = f"SELECT vin_number, descripcion, normalized_descripcion, referencia FROM processed_consolidado WHERE referencia IS NOT NULL LIMIT {SAMPLE_SIZE}"
         else:
-            query = "SELECT vin_number, descripcion, referencia FROM processed_consolidado WHERE referencia IS NOT NULL"
+            query = "SELECT vin_number, descripcion, normalized_descripcion, referencia FROM processed_consolidado WHERE referencia IS NOT NULL"
 
     if not os.path.exists(DB_PATH):
         print(f"Error: Database file not found at {DB_PATH}")
@@ -381,12 +383,12 @@ def load_and_preprocess_data(incremental_mode=False, days_back=7):
             SKU_NN_MODEL_DIR, f'encoder_{name}.joblib'))
 
     # Tokenize and pad text descriptions
-    print("Tokenizing and padding 'descripcion'...")
-    # Note: descriptions are already normalized in the database by unified_consolidado_processor.py
-    # which uses normalize_text() with case-insensitive processing and linguistic variations
-    descriptions = df['descripcion'].astype(str).tolist()
+    print("Tokenizing and padding 'normalized_descripcion'...")
+    # Note: descriptions are already processed in the database by unified_consolidado_processor.py
+    # which uses unified_text_preprocessing() with user corrections, abbreviations, synonyms, and linguistic variations
+    descriptions = df['normalized_descripcion'].astype(str).tolist()
 
-    # Additional normalization to ensure consistency (case-insensitive, synonyms, etc.)
+    # Additional normalization to ensure consistency (fallback for any edge cases)
     descriptions = [normalize_text(desc, expand_linguistic_variations=True) for desc in descriptions]
 
     # Create tokenizer
@@ -532,7 +534,7 @@ if __name__ == "__main__":
     TRAINING_MODE = args.mode
     incremental_mode = (TRAINING_MODE == 'incremental')
 
-    if not model_makerr:  # Critical dependency check
+    if not model_maker:  # Critical dependency check
         print("Exiting: VIN detail prediction models failed to load.")
     else:
         mode_text = "Incremental" if incremental_mode else "Full"
@@ -638,11 +640,11 @@ if __name__ == "__main__":
                 # Use lower learning rate for incremental training to avoid catastrophic forgetting
                 learning_rate = LEARNING_RATE * 0.1  # 10x lower learning rate
                 epochs = max(10, EPOCHS // 5)  # Fewer epochs for incremental
-                print(f"Incremental training: Using LR={learning_rate}, Epochs={epochs}")
+                print(f"🔄 Incremental training: LR={learning_rate}, Epochs={epochs}")
             else:
                 learning_rate = LEARNING_RATE
                 epochs = EPOCHS
-                print(f"Full training: Using LR={learning_rate}, Epochs={epochs}")
+                print(f"🚀 Full training: LR={learning_rate}, Epochs={epochs}")
 
             optimizer = optim.Adam(
                 model.parameters(), lr=learning_rate, weight_decay=1e-5)
@@ -739,12 +741,13 @@ if __name__ == "__main__":
                 eta_hours, eta_remainder = divmod(eta_seconds, 3600)
                 eta_minutes = eta_remainder // 60
 
-                print(f"Epoch {epoch+1}/{epochs} [{epoch_time:.1f}s], "
-                          f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, "
-                          f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}")
-                print(f"  Progress: {((epoch+1)/epochs)*100:.1f}% | "
-                      f"ETA: {int(eta_hours)}h {int(eta_minutes)}m | "
-                      f"Best Val Acc: {(1-best_val_loss):.4f}")
+                # Reduced logging frequency - only every 10% or every 10 epochs, whichever is smaller
+                log_interval = max(1, min(10, epochs // 10))
+                if (epoch + 1) % log_interval == 0 or epoch == 0 or epoch == epochs - 1:
+                    print(f"Epoch {epoch+1}/{epochs} [{epoch_time:.1f}s] | "
+                          f"Train: {train_acc:.3f} | Val: {(1-val_loss):.3f} | "
+                          f"Progress: {((epoch+1)/epochs)*100:.0f}% | "
+                          f"ETA: {int(eta_hours)}h{int(eta_minutes)}m")
 
                 # Early stopping with minimum improvement threshold
                 if val_loss < (best_val_loss - min_improvement):

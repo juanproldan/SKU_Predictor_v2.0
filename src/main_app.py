@@ -17,17 +17,11 @@ import torch  # For PyTorch
 try:
     import sys
     import os
-    # Add the parent directory to the path to find performance_improvements
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    parent_dir = os.path.dirname(current_dir)
-    if parent_dir not in sys.path:
-        sys.path.insert(0, parent_dir)
-
-    # Cache disabled: from performance_improvements.cache.referencia_prediction_cache import initialize_cache, get_cache
-    from performance_improvements.optimizations.database_optimizer import initialize_database_optimization, get_optimizer, get_query_cache
-    from performance_improvements.optimizations.parallel_predictor import initialize_parallel_predictor, get_parallel_predictor
-    from performance_improvements.enhanced_text_processing.smart_text_processor import initialize_smart_text_processor, get_smart_processor
-    from performance_improvements.enhanced_text_processing.equivalencias_analyzer import analyze_equivalencias_from_database
+    # Performance improvements are now in utils
+    from utils.performance_improvements.optimizations.database_optimizer import initialize_database_optimization, get_optimizer, get_query_cache
+    from utils.performance_improvements.optimizations.parallel_predictor import initialize_parallel_predictor, get_parallel_predictor
+    from utils.performance_improvements.enhanced_text_processing.smart_text_processor import initialize_smart_text_processor, get_smart_processor
+    from utils.performance_improvements.enhanced_text_processing.equivalencias_analyzer import analyze_equivalencias_from_database
 
     # New startup optimizations
     from utils.optimized_startup import (
@@ -35,6 +29,8 @@ try:
         get_text_processor, initialize_optimizations
     )
     from utils.optimized_database import get_optimized_database
+    from utils.year_range_database import YearRangeDatabaseOptimizer
+    from unified_consolidado_processor import get_base_path
     PERFORMANCE_IMPROVEMENTS_AVAILABLE = True
     print("🚀 Performance improvements loaded successfully")
 except ImportError as e:
@@ -78,8 +74,17 @@ PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 def get_resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller"""
     if hasattr(sys, '_MEIPASS'):
+        # PyInstaller bundle - resources are in _MEIPASS
         return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.join(os.path.abspath("."), relative_path)
+    elif getattr(sys, 'frozen', False):
+        # Running as executable - resources are relative to executable location
+        return os.path.join(os.path.dirname(sys.executable), relative_path)
+    else:
+        # Running as script - point to client directory structure
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(script_dir)  # Go up from src/ to project root
+        client_dir = os.path.join(project_root, "Fixacar_SKU_Predictor_CLIENT")
+        return os.path.join(client_dir, relative_path)
 
 
 # --- Configuration (using resource path) ---
@@ -163,12 +168,35 @@ class FixacarApp:
             # Initialize optimized database
             self.optimized_db = get_optimized_database()
 
+            # Initialize year range database optimizer
+            try:
+                db_path = os.path.join(get_base_path(), "Source_Files", "processed_consolidado.db")
+                print(f"🔍 Year range optimizer DB path: {db_path}")
+                print(f"🔍 DB exists: {os.path.exists(db_path)}")
+                self.year_range_optimizer = YearRangeDatabaseOptimizer(db_path)
+                print("✅ Year range optimizer initialized successfully")
+            except Exception as e:
+                print(f"⚠️ Year range optimizer initialization failed: {e}")
+                import traceback
+                traceback.print_exc()
+                self.year_range_optimizer = None
+
             print("✅ Startup optimizations initialized")
 
         except Exception as e:
             print(f"⚠️ Startup optimization error: {e}")
             # Continue without optimizations
             self.optimized_db = None
+            # Still try to initialize year range optimizer separately
+            try:
+                db_path = os.path.join(get_base_path(), "Source_Files", "processed_consolidado.db")
+                print(f"🔍 Year range optimizer DB path (fallback): {db_path}")
+                print(f"🔍 DB exists (fallback): {os.path.exists(db_path)}")
+                self.year_range_optimizer = YearRangeDatabaseOptimizer(db_path)
+                print("✅ Year range optimizer initialized successfully (fallback)")
+            except Exception as e2:
+                print(f"⚠️ Year range optimizer fallback initialization failed: {e2}")
+                self.year_range_optimizer = None
 
     def load_all_data_and_models(self):
         """Loads data files and trained prediction models on startup."""
@@ -188,11 +216,11 @@ class FixacarApp:
         print("Loading VIN prediction models...")
         try:
             model_maker = joblib.load(os.path.join(
-                MODEL_DIR, 'makerr_model.joblib'))
+                MODEL_DIR, 'maker_model.joblib'))
             encoder_x_maker = joblib.load(os.path.join(
-                MODEL_DIR, 'makerr_encoder_x.joblib'))
+                MODEL_DIR, 'maker_encoder_x.joblib'))
             encoder_y_maker = joblib.load(os.path.join(
-                MODEL_DIR, 'makerr_encoder_y.joblib'))
+                MODEL_DIR, 'maker_encoder_y.joblib'))
             print("  Maker model loaded.")
 
             model = joblib.load(os.path.join(
@@ -234,13 +262,13 @@ class FixacarApp:
                 SKU_NN_MODEL_DIR, 'sku_nn_model_pytorch_optimized.pth')
 
             sku_nn_encoder_make = joblib.load(os.path.join(
-                SKU_NN_MODEL_DIR, 'encoder_Make.joblib'))
+                SKU_NN_MODEL_DIR, 'encoder_maker.joblib'))
             print("  SKU NN Make encoder loaded.")
             sku_nn_encoder_model = joblib.load(os.path.join(
-                SKU_NN_MODEL_DIR, 'encoder_Model Year.joblib'))
+                SKU_NN_MODEL_DIR, 'encoder_model.joblib'))
             print("  SKU NN Model Year encoder loaded.")
             sku_nn_encoder_series = joblib.load(os.path.join(
-                SKU_NN_MODEL_DIR, 'encoder_Series.joblib'))
+                SKU_NN_MODEL_DIR, 'encoder_series.joblib'))
             print("  SKU NN Series encoder loaded.")
             try:
                 sku_nn_tokenizer_desc = joblib.load(os.path.join(
@@ -377,7 +405,7 @@ class FixacarApp:
         if PERFORMANCE_IMPROVEMENTS_AVAILABLE and self.smart_processor:
             try:
                 # Use enhanced text processing
-                from performance_improvements.enhanced_text_processing.smart_text_processor import get_smart_processor
+                from utils.performance_improvements.enhanced_text_processing.smart_text_processor import get_smart_processor
                 smart_processor = get_smart_processor()
 
                 # Apply enhanced processing with existing text processor as fallback
@@ -475,8 +503,7 @@ class FixacarApp:
         - 1 occurrence: 30-40% - very low confidence (likely errors)
         - 2-4 occurrences: 40-50% - low confidence
         - 5-9 occurrences: 50-60% - medium-low confidence
-        - 10-19 occurrences: 60-70% - medium confidence
-        - 20+ occurrences: 80% - high confidence (as requested)
+        - 10+ occurrences: 80% - high confidence (reduced from 20 to 10)
 
         Args:
             frequency: Number of times this SKU appears in database for this combination
@@ -494,11 +521,8 @@ class FixacarApp:
         elif frequency <= 9:
             # Medium-low confidence
             base_confidence = 0.50 + 0.02 * (frequency - 5)  # 0.50-0.60 range
-        elif frequency <= 19:
-            # Medium confidence
-            base_confidence = 0.60 + 0.01 * (frequency - 10)  # 0.60-0.70 range
         else:
-            # High confidence for reliable data (20+ occurrences = 80% as requested)
+            # High confidence for reliable data (10+ occurrences = 80% - reduced from 20)
             base_confidence = 0.80
 
         # Slight adjustment based on prediction type
@@ -548,9 +572,9 @@ class FixacarApp:
             if ratio >= min_consensus_ratio:
                 consensus_skus.append((referencia, frequency))
                 print(f"      ✅ Included: Strong consensus ({ratio:.2%} ≥ {min_consensus_ratio:.1%})")
-            elif frequency >= 20:  # Always include high-frequency SKUs even if ratio is low
+            elif frequency >= 10:  # Always include high-frequency SKUs even if ratio is low (reduced from 20 to 10)
                 consensus_skus.append((referencia, frequency))
-                print(f"      ✅ Included: High frequency ({frequency} ≥ 20 occurrences)")
+                print(f"      ✅ Included: High frequency ({frequency} ≥ 10 occurrences)")
             else:
                 print(f"      ❌ Excluded: Weak consensus ({ratio:.2%} < {min_consensus_ratio:.1%}, freq: {frequency})")
 
@@ -619,7 +643,7 @@ class FixacarApp:
             Most common series name or "Unknown" if not found
         """
         try:
-            conn = sqlite3.connect('Source_Files/processed_consolidado.db')
+            conn = sqlite3.connect(DEFAULT_DB_PATH)
             cursor = conn.cursor()
 
             # Get the most common series for this WMI and maker
@@ -825,7 +849,10 @@ class FixacarApp:
         if not text or not abbreviations_map_global:
             return text
 
-        words = text.split()
+        # Split on both spaces and dots to handle cases like "BOC.INF.PUER.DEL.I."
+        import re
+        words = re.split(r'[\s.]+', text)
+        words = [w for w in words if w]  # Remove empty strings
         expanded_words = []
 
         for word in words:
@@ -837,7 +864,9 @@ class FixacarApp:
                 expanded_words.append(expanded)
                 print(f"    📝 Abbreviation expanded: '{word}' → '{expanded}'")
             else:
+                # Keep original case for non-expanded words
                 expanded_words.append(word)
+
 
         return ' '.join(expanded_words)
 
@@ -1406,6 +1435,8 @@ class FixacarApp:
             print(f"   - User Corrections: {len(user_corrections_map_global)} mappings")
             print(f"   - Series Normalization: {len(series_normalization_map_global)} mappings")
 
+
+
         except Exception as e:
             print(f"Error loading text processing rules: {e}")
             # Initialize empty maps as fallback
@@ -1654,19 +1685,16 @@ class FixacarApp:
                 normalized_desc = entry.get('Normalized_descripcion_Input', "")
 
                 if pd.notna(original_desc):
-                    # Store both original and normalized descriptions
-                    entry['original_descripcion'] = str(original_desc)
+                    # Store original description in 'descripcion' and normalized in 'normalized_descripcion'
+                    entry['descripcion'] = str(original_desc)
                     if pd.notna(normalized_desc) and str(normalized_desc).strip():
                         entry['normalized_descripcion'] = str(normalized_desc)
                     else:
                         # If no normalized version, create one
                         entry['normalized_descripcion'] = normalize_text(str(original_desc))
-                    # For backward compatibility, keep 'descripcion' field pointing to normalized
-                    entry['descripcion'] = entry['normalized_descripcion']
                 else:
-                    entry['original_descripcion'] = ""
-                    entry['normalized_descripcion'] = ""
                     entry['descripcion'] = ""
+                    entry['normalized_descripcion'] = ""
 
                 # Fix bracketed values in integer columns
                 for col in ['Maestro_ID', 'model']:
@@ -2588,6 +2616,8 @@ class FixacarApp:
                     else:
                         print(f"  ❌ No Maestro fallback matches found")
 
+
+
                 # --- Neural Network Prediction (Priority 2) ---
                 # Use the already normalized series from above (consistent across all prediction sources)
                 series_str_for_nn = series  # This is already normalized
@@ -2634,389 +2664,53 @@ class FixacarApp:
                     print("  Skipping SKU NN prediction due to missing Make, Year, or Series from VIN prediction.")
                 # --- End Neural Network Prediction ---
 
-                # SQLite Search (4-parameter matching: maker, model, series, Description) - Priority 3
-                if model is not None and series.upper() != 'N/A':
-                    print(
-                        f"  Searching SQLite DB (maker: {maker}, model: {model}, series: {series})...")
+                # --- Year Range Database Optimization (Priority 3) ---
+                if self.year_range_optimizer and model is not None and series.upper() != 'N/A':
+                    print(f"  🚀 Searching Year Range Database (maker: {maker}, model: {model}, series: {series})...")
                     try:
-                        # DUAL MATCHING STRATEGY: Search descripcion column with different text processing approaches
+                        # Try with original description first
+                        year_range_predictions = self.year_range_optimizer.get_sku_predictions_year_range(
+                            maker=maker,
+                            model=model,
+                            series=series,
+                            description=original_desc,
+                            limit=10
+                        )
 
-                        # DUAL MATCHING STRATEGY: Compare user input (original + normalized) against database descripcion
-                        print(f"    🔍 Dual matching strategy:")
-                        print(f"      User original: '{original_desc}'")
-                        print(f"      User normalized: '{normalized_original}'")
+                        if year_range_predictions:
+                            print(f"    ✅ Found {len(year_range_predictions)} year range predictions (original desc)")
+                            for pred in year_range_predictions:
+                                suggestions = self._aggregate_sku_suggestions(
+                                    suggestions, pred['sku'], pred['confidence'], f"Year-Range ({pred['year_range']})")
+                                print(f"    📅 Year Range: {pred['sku']} (Freq: {pred['frequency']}, Range: {pred['year_range']}, Conf: {pred['confidence']:.3f})")
 
-                        # STEP 1A: User original input vs Database descripcion (exact match)
-                        print(f"    Trying user original vs DB descripcion: '{original_desc}'")
-                        cursor.execute("""
-                            SELECT referencia, COUNT(*) as frequency, 'original_vs_db' as match_type
-                            FROM processed_consolidado
-                            WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(descripcion) = LOWER(?)
-                            AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
-                            GROUP BY referencia
-                            ORDER BY COUNT(*) DESC
-                        """, (maker, model, series, original_desc))
-                        original_vs_db_results = cursor.fetchall()
+                        # If no results with original, try with normalized description
+                        if not year_range_predictions:
+                            year_range_predictions = self.year_range_optimizer.get_sku_predictions_year_range(
+                                maker=maker,
+                                model=model,
+                                series=series,
+                                description=normalized_original,
+                                limit=10
+                            )
 
-                        # STEP 1B: User normalized input vs Database descripcion (normalized comparison)
-                        print(f"    Trying user normalized vs DB descripcion: '{normalized_original}'")
-                        cursor.execute("""
-                            SELECT referencia, COUNT(*) as frequency, 'normalized_vs_db' as match_type
-                            FROM processed_consolidado
-                            WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(descripcion) = LOWER(?)
-                            AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
-                            GROUP BY referencia
-                            ORDER BY COUNT(*) DESC
-                        """, (maker, model, series, normalized_original))
-                        normalized_vs_db_results = cursor.fetchall()
-
-                        # Combine results from both matching strategies
-                        all_exact_results = original_vs_db_results + normalized_vs_db_results
-
-                        # If no exact series match, try fuzzy series matching (CASE-INSENSITIVE)
-                        if not all_exact_results:
-                            print(f"    No exact series match for '{series}', trying fuzzy series matching...")
-                            # Extract base series (remove brackets and extra info)
-                            base_series = series.split('[')[0].strip() if '[' in series else series
-
-                            # Fuzzy match: User normalized vs DB descripcion
-                            cursor.execute("""
-                                SELECT referencia, COUNT(*) as frequency, 'normalized_fuzzy' as match_type
-                                FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ?
-                                AND (LOWER(series) = LOWER(?) OR LOWER(series) LIKE LOWER(?) OR LOWER(series) LIKE LOWER(?))
-                                AND LOWER(descripcion) = LOWER(?)
-                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
-                                GROUP BY referencia
-                                ORDER BY COUNT(*) DESC
-                            """, (maker, model, base_series, f"{base_series}%", f"%{base_series}%", normalized_original))
-                            normalized_fuzzy_results = cursor.fetchall()
-
-                            # Fuzzy match: User original vs DB descripcion
-                            cursor.execute("""
-                                SELECT referencia, COUNT(*) as frequency, 'original_fuzzy' as match_type
-                                FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ?
-                                AND (LOWER(series) = LOWER(?) OR LOWER(series) LIKE LOWER(?) OR LOWER(series) LIKE LOWER(?))
-                                AND LOWER(descripcion) = LOWER(?)
-                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
-                                GROUP BY referencia
-                                ORDER BY COUNT(*) DESC
-                            """, (maker, model, base_series, f"{base_series}%", f"%{base_series}%", original_desc))
-                            original_fuzzy_results = cursor.fetchall()
-
-                            # Combine fuzzy results and update all_exact_results for downstream processing
-                            all_fuzzy_results = normalized_fuzzy_results + original_fuzzy_results
-                            all_exact_results = all_fuzzy_results  # Use fuzzy results as fallback
-
-                            if all_fuzzy_results:
-                                print(f"    ✅ Found {len(all_fuzzy_results)} unique SKUs via FUZZY SERIES match (base: '{base_series}')")
-
-                        # Process the results from dual matching strategy
-                        exact_results = all_exact_results
-
-                        if exact_results:
-                            print(f"    ✅ Found {len(exact_results)} unique SKUs via EXACT match")
-                            # Convert 3-element tuples to 2-element tuples for consensus logic
-                            exact_results_for_consensus = [(referencia, frequency) for referencia, frequency, match_type in exact_results]
-                            # Apply consensus logic to filter out minority/outlier SKUs
-                            consensus_skus = self.apply_consensus_logic(exact_results_for_consensus, min_consensus_ratio=0.6)
-                            for referencia, frequency in consensus_skus:
-                                confidence = self.calculate_frequency_based_confidence(frequency, "DB-Exact")
-                                final_confidence = self._calculate_consensus_confidence(confidence, ["DB-Exact"])
-                                suggestions = self._aggregate_sku_suggestions(suggestions, referencia, final_confidence, "DB-Exact")
-                                print(f"    ✅ Found in DB (Exact Match): {referencia} (Freq: {frequency}, Conf: {final_confidence:.4f})")
-
-                        # STEP 1B: If no exact matches, try abbreviated description with dual search
-                        if not exact_results:
-                            print(f"    No exact matches, trying abbreviated description: '{abbreviated_desc}'")
-
-                            # Search descripcion column with abbreviated description
-                            cursor.execute("""
-                                SELECT referencia, COUNT(*) as frequency, 'normalized_abbrev' as match_type
-                                FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(descripcion) = LOWER(?)
-                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
-                                GROUP BY referencia
-                                ORDER BY COUNT(*) DESC
-                            """, (maker, model, series, abbreviated_desc))
-                            normalized_abbrev_results = cursor.fetchall()
-
-                            # Search descripcion column with abbreviated description
-                            cursor.execute("""
-                                SELECT referencia, COUNT(*) as frequency, 'original_abbrev' as match_type
-                                FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?) AND LOWER(descripcion) = LOWER(?)
-                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
-                                GROUP BY referencia
-                                ORDER BY COUNT(*) DESC
-                            """, (maker, model, series, abbreviated_desc))
-                            original_abbrev_results = cursor.fetchall()
-
-                            # If no exact series match, try fuzzy series matching (CASE-INSENSITIVE)
-                            if not normalized_abbrev_results and not original_abbrev_results:
-                                print(f"    No exact series match for '{series}', trying fuzzy series matching...")
-                                # Extract base series (remove brackets and extra info)
-                                base_series = series.split('[')[0].strip() if '[' in series else series
-
-                                # Fuzzy search in normalized_descripcion
-                                cursor.execute("""
-                                    SELECT referencia, COUNT(*) as frequency, 'normalized_abbrev_fuzzy' as match_type
-                                    FROM processed_consolidado
-                                    WHERE LOWER(maker) = LOWER(?) AND model = ?
-                                    AND (LOWER(series) = LOWER(?) OR LOWER(series) LIKE LOWER(?) OR LOWER(series) LIKE LOWER(?))
-                                    AND LOWER(descripcion) = LOWER(?)
-                                    AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
-                                    GROUP BY referencia
-                                    ORDER BY COUNT(*) DESC
-                                """, (maker, model, base_series, f"{base_series}%", f"%{base_series}%", abbreviated_desc))
-                                normalized_abbrev_results = cursor.fetchall()
-
-                                # Fuzzy search in original_descripcion
-                                cursor.execute("""
-                                    SELECT referencia, COUNT(*) as frequency, 'original_abbrev_fuzzy' as match_type
-                                    FROM processed_consolidado
-                                    WHERE LOWER(maker) = LOWER(?) AND model = ?
-                                    AND (LOWER(series) = LOWER(?) OR LOWER(series) LIKE LOWER(?) OR LOWER(series) LIKE LOWER(?))
-                                    AND LOWER(descripcion) = LOWER(?)
-                                    AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
-                                    GROUP BY referencia
-                                    ORDER BY COUNT(*) DESC
-                                """, (maker, model, base_series, f"{base_series}%", f"%{base_series}%", abbreviated_desc))
-                                original_abbrev_results = cursor.fetchall()
-
-                            # Merge abbreviated description results
-                            results = self.merge_dual_search_results(normalized_abbrev_results, original_abbrev_results)
-                        else:
-                            results = exact_results
-
-                        if results:
-                            print(f"    Found {len(results)} unique SKUs in DB-Exact")
-
-                            # Convert 3-element tuples to 2-element tuples for consensus logic
-                            results_for_consensus = [(referencia, frequency) for referencia, frequency, match_type in results]
-                            # Apply consensus logic to filter out minority/outlier SKUs
-                            consensus_skus = self.apply_consensus_logic(results_for_consensus, min_consensus_ratio=0.6)
-
-                            # Process consensus SKUs with frequency-based confidence
-                            for referencia, frequency in consensus_skus:
-                                if referencia and referencia.strip():
-                                    confidence = self.calculate_frequency_based_confidence(frequency, "DB-Exact")
+                            if year_range_predictions:
+                                print(f"    ✅ Found {len(year_range_predictions)} year range predictions (normalized desc)")
+                                for pred in year_range_predictions:
                                     suggestions = self._aggregate_sku_suggestions(
-                                        suggestions, referencia, confidence, "DB-Exact")
-                                    print(
-                                        f"    ✅ Found in DB-Exact: {referencia} (Freq: {frequency}, Conf: {confidence})")
-                        else:
-                            print("    No exact matches found in DB")
+                                        suggestions, pred['sku'], pred['confidence'], f"Year-Range ({pred['year_range']})")
+                                    print(f"    📅 Year Range: {pred['sku']} (Freq: {pred['frequency']}, Range: {pred['year_range']}, Conf: {pred['confidence']:.3f})")
 
-                        # STEP 2: If no exact match, try fuzzy series matching with abbreviated description (dual search)
-                        if not suggestions:
-                            print("    No exact series match, trying fuzzy series matching with abbreviated description...")
+                        if not year_range_predictions:
+                            print(f"    ❌ No year range matches found")
 
-                            # Search descripcion with fuzzy series
-                            cursor.execute("""
-                                SELECT referencia, COUNT(*) as frequency, 'normalized_fuzzy' as match_type
-                                FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(descripcion) = LOWER(?)
-                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
-                                GROUP BY referencia
-                                ORDER BY COUNT(*) DESC
-                            """, (maker, model, f'%{series}%', abbreviated_desc))
-                            normalized_fuzzy_results = cursor.fetchall()
+                    except Exception as e:
+                        print(f"    ⚠️ Year range optimization error: {e}")
+                # --- End Year Range Database Optimization ---
 
-                            # Search descripcion with fuzzy series
-                            cursor.execute("""
-                                SELECT referencia, COUNT(*) as frequency, 'original_fuzzy' as match_type
-                                FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(descripcion) = LOWER(?)
-                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
-                                GROUP BY referencia
-                                ORDER BY COUNT(*) DESC
-                            """, (maker, model, f'%{series}%', abbreviated_desc))
-                            original_fuzzy_results = cursor.fetchall()
 
-                            # Merge fuzzy series results
-                            results = self.merge_dual_search_results(normalized_fuzzy_results, original_fuzzy_results)
 
-                            if results:
-                                print(f"    Found {len(results)} unique SKUs in DB (Fuzzy Series + Abbreviated)")
 
-                                # Apply consensus logic to filter out minority/outlier SKUs
-                                consensus_skus = self.apply_consensus_logic(results, min_consensus_ratio=0.6)
-
-                                # Process consensus SKUs with frequency-based confidence
-                                for referencia, frequency in consensus_skus:
-                                    if referencia and referencia.strip():
-                                        confidence = self.calculate_frequency_based_confidence(frequency, "DB (Fuzzy Series)")
-                                        suggestions = self._aggregate_sku_suggestions(
-                                            suggestions, referencia, confidence, f"DB (Fuzzy Series + Abbreviated)")
-                                        print(
-                                            f"    ✅ Found in DB (Fuzzy Series + Abbreviated): {referencia} (Freq: {frequency}, Conf: {confidence})")
-                            else:
-                                print("    No fuzzy series + abbreviated matches found in DB")
-
-                        # STEP 2b: If still no match, try fuzzy series matching with original description (dual search)
-                        if not suggestions:
-                            print("    No match with abbreviated, trying fuzzy series matching with original description...")
-
-                            # Search descripcion with normalized original
-                            cursor.execute("""
-                                SELECT referencia, COUNT(*) as frequency, 'normalized_fuzzy_orig' as match_type
-                                FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(descripcion) = LOWER(?)
-                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
-                                GROUP BY referencia
-                            """, (maker, model, f'%{series}%', normalized_original))
-                            normalized_orig_results = cursor.fetchall()
-
-                            # Search descripcion with original description
-                            cursor.execute("""
-                                SELECT referencia, COUNT(*) as frequency, 'original_fuzzy_orig' as match_type
-                                FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(descripcion) = LOWER(?)
-                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
-                                GROUP BY referencia
-                            """, (maker, model, f'%{series}%', original_desc))
-                            original_orig_results = cursor.fetchall()
-
-                            # Merge results
-                            results = self.merge_dual_search_results(normalized_orig_results, original_orig_results)
-                            total_matches = sum(row[1] for row in results)
-                            for referencia, frequency in results:
-                                if referencia and referencia.strip():
-                                    confidence = round(
-                                        0.35 + 0.25 * (frequency / total_matches), 3) if total_matches > 0 else 0.35
-                                    suggestions = self._aggregate_sku_suggestions(
-                                        suggestions, referencia, confidence, f"DB (Fuzzy Series + Original)")
-                                    print(
-                                        f"    Found in DB (Fuzzy Series + Original): {referencia} (Freq: {frequency}, Conf: {confidence})")
-
-                        # STEP 2c: If still no match, try fuzzy series matching with expanded description (dual search)
-                        if not suggestions:
-                            print("    No match with original description, trying fuzzy series matching with expanded description...")
-
-                            # Search descripcion
-                            cursor.execute("""
-                                SELECT referencia, COUNT(*) as frequency, 'normalized_fuzzy_exp' as match_type
-                                FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(descripcion) = LOWER(?)
-                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
-                                GROUP BY referencia
-                            """, (maker, model, f'%{series}%', normalized_expanded))
-                            normalized_exp_results = cursor.fetchall()
-
-                            # Search descripcion
-                            cursor.execute("""
-                                SELECT referencia, COUNT(*) as frequency, 'original_fuzzy_exp' as match_type
-                                FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?) AND LOWER(descripcion) = LOWER(?)
-                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
-                                GROUP BY referencia
-                            """, (maker, model, f'%{series}%', expanded_desc))
-                            original_exp_results = cursor.fetchall()
-
-                            # Merge results
-                            results = self.merge_dual_search_results(normalized_exp_results, original_exp_results)
-                            total_matches = sum(row[1] for row in results)
-                            for referencia, frequency in results:
-                                if referencia and referencia.strip():
-                                    confidence = round(
-                                        0.35 + 0.25 * (frequency / total_matches), 3) if total_matches > 0 else 0.35
-                                    suggestions = self._aggregate_sku_suggestions(
-                                        suggestions, referencia, confidence, f"DB (Fuzzy Series + Expanded)")
-                                    print(
-                                        f"    Found in DB (Fuzzy Series + Expanded): {referencia} (Freq: {frequency}, Conf: {confidence})")
-
-                        # STEP 3: Removed fuzzy description matching - only use exact matches
-                        # Fuzzy description matching removed to prevent wrong part suggestions
-                        if not suggestions:
-                            print("    No exact description matches found. Skipping fuzzy description matching to avoid wrong parts.")
-
-                    except Exception as db_err:
-                        print(
-                            f"    Error querying SQLite DB: {db_err}")
-
-                # Fallback: 3-parameter search if no results (maker, model, series only)
-                if not suggestions and model is not None and series.upper() != 'N/A':
-                    print(
-                        f"  Fallback SQLite search (3-param: maker, model, series)...")
-                    try:
-                        # STEP 1: Try exact series match with fuzzy description
-                        cursor.execute("""
-                            SELECT referencia, descripcion, COUNT(*) as frequency
-                            FROM processed_consolidado
-                            WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) = LOWER(?)
-                            AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
-                            GROUP BY referencia, descripcion
-                            ORDER BY frequency DESC
-                        """, (maker, model, series))
-                        results = cursor.fetchall()
-
-                        print(f"    🔄 3-param fallback: Only exact description matches allowed...")
-
-                        # Process exact matches only (no fuzzy description matching)
-                        for referencia, db_desc, frequency in results:
-                            if referencia and referencia.strip() and db_desc:
-                                # Apply unified preprocessing to both descriptions for exact comparison
-                                preprocessed_original = self.unified_text_preprocessing(original_desc)
-                                preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
-                                preprocessed_db_desc = self.unified_text_preprocessing(db_desc)
-
-                                # Only exact matches after preprocessing (no similarity threshold)
-                                if preprocessed_original == preprocessed_db_desc:
-                                    confidence = self.calculate_frequency_based_confidence(frequency, "DB (3-param Exact)")
-                                    suggestions = self._aggregate_sku_suggestions(
-                                        suggestions, referencia, confidence, f"DB (3-param Exact Orig)")
-                                    print(f"    ✅ Found in DB (3-param Exact Orig): {referencia} (Freq: {frequency}, Conf: {confidence})")
-                                elif preprocessed_expanded == preprocessed_db_desc:
-                                    confidence = self.calculate_frequency_based_confidence(frequency, "DB (3-param Exact)")
-                                    suggestions = self._aggregate_sku_suggestions(
-                                        suggestions, referencia, confidence, f"DB (3-param Exact Exp)")
-                                    print(f"    ✅ Found in DB (3-param Exact Exp): {referencia} (Freq: {frequency}, Conf: {confidence})")
-
-                        # STEP 2: If still no results, try fuzzy series + EXACT description only
-                        if not suggestions:
-                            print(
-                                f"  Final Fallback SQLite search (Fuzzy series: maker, model, series LIKE '%{series}%')...")
-                            cursor.execute("""
-                                SELECT referencia, descripcion, COUNT(*) as frequency
-                                FROM processed_consolidado
-                                WHERE LOWER(maker) = LOWER(?) AND model = ? AND LOWER(series) LIKE LOWER(?)
-                                AND referencia IS NOT NULL AND referencia != '' AND referencia != 'None' AND referencia != 'UNKNOWN'
-                                GROUP BY referencia, descripcion
-                                ORDER BY frequency DESC
-                            """, (maker, model, f'%{series}%'))
-                            fuzzy_results = cursor.fetchall()
-
-                            print(f"    🔄 Applying unified preprocessing for fuzzy series + exact description matching...")
-
-                            # Apply unified preprocessing to input descriptions
-                            preprocessed_original = self.unified_text_preprocessing(original_desc)
-                            preprocessed_expanded = self.unified_text_preprocessing(expanded_desc)
-
-                            # Apply EXACT description matching only (no similarity threshold)
-                            for referencia, db_desc, frequency in fuzzy_results:
-                                if referencia and referencia.strip() and db_desc:
-                                    # Apply unified preprocessing to database description
-                                    preprocessed_db_desc = self.unified_text_preprocessing(db_desc)
-
-                                    # Only exact matches after preprocessing
-                                    if preprocessed_original == preprocessed_db_desc:
-                                        confidence = self.calculate_frequency_based_confidence(frequency, "DB (Fuzzy Series+Exact Desc)")
-                                        suggestions = self._aggregate_sku_suggestions(
-                                            suggestions, referencia, confidence, f"DB (Fuzzy Series+Exact Desc Orig)")
-                                        print(
-                                            f"    Found in DB (Fuzzy Series+Exact Desc Orig): {referencia} (Freq: {frequency}, Conf: {confidence})")
-                                    elif preprocessed_expanded == preprocessed_db_desc:
-                                        confidence = self.calculate_frequency_based_confidence(frequency, "DB (Fuzzy Series+Exact Desc)")
-                                        suggestions = self._aggregate_sku_suggestions(
-                                            suggestions, referencia, confidence, f"DB (Fuzzy Series+Exact Desc Exp)")
-                                        print(
-                                            f"    Found in DB (Fuzzy Series+Exact Desc Exp): {referencia} (Freq: {frequency}, Conf: {confidence})")
-
-                    except Exception as db_err:
-                        print(
-                            f"    Error querying SQLite DB (3-param): {db_err}")
 
 
 
