@@ -1,7 +1,45 @@
+# =============================================================================
+# PyInstaller Runtime Path Fix
+# This must run before any libraries that need bundled data are imported.
+# =============================================================================
+import sys
+import os
+
+# BULLETPROOF spaCy model loading for PyInstaller
+if getattr(sys, 'frozen', False):
+    # If the application is run as a bundle, the PyInstaller bootloader
+    # extends the sys module by a flag frozen=True and sets the app
+    # path into variable _MEIPASS'.
+    application_path = sys._MEIPASS
+
+    # Define where spaCy should look for its models
+    spacy_data_path = os.path.join(application_path)
+    spacy_model_path = os.path.join(application_path, 'es_core_news_sm')
+
+    # Set multiple environment variables that spaCy might check
+    os.environ['SPACY_DATA'] = spacy_data_path
+    os.environ['SPACY_MODEL_PATH'] = spacy_model_path
+
+    # Add the model path to Python's module search path
+    # This allows spaCy to find the model as if it were a Python package
+    if spacy_model_path not in sys.path:
+        sys.path.insert(0, spacy_model_path)
+    if spacy_data_path not in sys.path:
+        sys.path.insert(0, spacy_data_path)
+
+    # Optional: For debugging, you can print the paths
+    print(f"Running in bundled mode. SPACY_DATA set to: {spacy_data_path}")
+    print(f"spaCy model path added to sys.path: {spacy_model_path}")
+    print(f"Model directory exists: {os.path.exists(spacy_model_path)}")
+    if os.path.exists(spacy_model_path):
+        print(f"Model directory contents: {os.listdir(spacy_model_path)}")
+
+# =============================================================================
+# Regular imports can now begin
+# =============================================================================
 import tkinter as tk
 from tkinter import ttk
 from tkinter import messagebox  # For showing error popups
-import os
 import pandas as pd
 # import requests # No longer needed
 import sqlite3  # For database connection
@@ -36,6 +74,16 @@ try:
 except ImportError as e:
     print(f"⚠️ Performance improvements not available: {e}")
     PERFORMANCE_IMPROVEMENTS_AVAILABLE = False
+
+    # Define fallback get_base_path function
+    def get_base_path():
+        """Fallback function when unified_consolidado_processor is not available"""
+        if getattr(sys, 'frozen', False):
+            # Running as PyInstaller executable
+            return os.path.dirname(sys.executable)
+        else:
+            # Running as script
+            return os.path.dirname(os.path.abspath(__file__))
 # Import our PyTorch model implementation
 # Handle PyInstaller bundled imports
 def setup_imports():
@@ -44,10 +92,14 @@ def setup_imports():
     import os
 
     # Check if running in PyInstaller bundle
-    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        # Running in PyInstaller bundle
-        bundle_dir = sys._MEIPASS
-        src_path = bundle_dir
+    if getattr(sys, 'frozen', False):
+        if hasattr(sys, '_MEIPASS'):
+            # Running in PyInstaller bundle
+            bundle_dir = sys._MEIPASS
+            src_path = bundle_dir
+        else:
+            # Running as frozen executable (not PyInstaller bundle)
+            src_path = os.path.dirname(sys.executable)
     else:
         # Running in development
         src_path = os.path.dirname(os.path.abspath(__file__))
@@ -56,42 +108,126 @@ def setup_imports():
     if src_path not in sys.path:
         sys.path.insert(0, src_path)
 
+    # Also add common subdirectories for PyInstaller
+    for subdir in ['models', 'utils', 'core', 'gui']:
+        subdir_path = os.path.join(src_path, subdir)
+        if os.path.exists(subdir_path) and subdir_path not in sys.path:
+            sys.path.insert(0, subdir_path)
+
 # Setup imports
 setup_imports()
 
-# Now import the modules
+# Global variables for imports (will be set in try/except blocks)
+load_model = None
+predict_sku = None
+normalize_text = None
+DummyTokenizer = None
+extract_vin_features_production = None
+decode_year = None
+
+# Now import the modules with multiple fallback strategies
 try:
     from models.sku_nn_pytorch import load_model, predict_sku
     from utils.text_utils import normalize_text
     from utils.dummy_tokenizer import DummyTokenizer
     from train_vin_predictor import extract_vin_features_production, decode_year
+    print("✅ Successfully imported all modules (strategy 1)")
 except ImportError as e:
-    print(f"Import error: {e}")
-    # Try importing from current directory
-    import sys
-    import os
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    sys.path.insert(0, current_dir)
-
+    print(f"Import error (strategy 1): {e}")
     try:
+        # Strategy 2: Try importing from current directory
+        import sys
+        import os
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        sys.path.insert(0, current_dir)
+
         from models.sku_nn_pytorch import load_model, predict_sku
         from utils.text_utils import normalize_text
         from utils.dummy_tokenizer import DummyTokenizer
         from train_vin_predictor import extract_vin_features_production, decode_year
+        print("✅ Successfully imported all modules (strategy 2)")
     except ImportError as e2:
-        print(f"Second import error: {e2}")
-        # Last resort - try absolute imports
-        import models.sku_nn_pytorch as sku_nn
-        import utils.text_utils as text_utils
-        import utils.dummy_tokenizer as dummy_tokenizer
-        import train_vin_predictor as vin_predictor
+        print(f"Import error (strategy 2): {e2}")
+        try:
+            # Strategy 3: Try absolute imports
+            import models.sku_nn_pytorch as sku_nn
+            import utils.text_utils as text_utils
+            import utils.dummy_tokenizer as dummy_tokenizer
+            import train_vin_predictor as vin_predictor
 
-        load_model = sku_nn.load_model
-        predict_sku = sku_nn.predict_sku
-        normalize_text = text_utils.normalize_text
-        DummyTokenizer = dummy_tokenizer.DummyTokenizer
-        extract_vin_features_production = vin_predictor.extract_vin_features_production
-        decode_year = vin_predictor.decode_year
+            load_model = sku_nn.load_model
+            predict_sku = sku_nn.predict_sku
+            normalize_text = text_utils.normalize_text
+            DummyTokenizer = dummy_tokenizer.DummyTokenizer
+            extract_vin_features_production = vin_predictor.extract_vin_features_production
+            decode_year = vin_predictor.decode_year
+            print("✅ Successfully imported all modules (strategy 3)")
+        except ImportError as e3:
+            print(f"Import error (strategy 3): {e3}")
+            # Strategy 4: Import individual files directly
+            try:
+                import sys
+                import os
+
+                # Get the directory where the executable is located
+                if getattr(sys, 'frozen', False):
+                    base_dir = os.path.dirname(sys.executable)
+                else:
+                    base_dir = os.path.dirname(os.path.abspath(__file__))
+
+                # Add all possible paths
+                possible_paths = [
+                    base_dir,
+                    os.path.join(base_dir, 'models'),
+                    os.path.join(base_dir, 'utils'),
+                    os.path.join(base_dir, '..', 'src'),
+                    os.path.join(base_dir, '..', 'src', 'models'),
+                    os.path.join(base_dir, '..', 'src', 'utils')
+                ]
+
+                for path in possible_paths:
+                    if os.path.exists(path) and path not in sys.path:
+                        sys.path.insert(0, path)
+
+                # Try importing again
+                import sku_nn_pytorch
+                import text_utils
+                import dummy_tokenizer
+                import train_vin_predictor
+
+                load_model = sku_nn_pytorch.load_model
+                predict_sku = sku_nn_pytorch.predict_sku
+                normalize_text = text_utils.normalize_text
+                DummyTokenizer = dummy_tokenizer.DummyTokenizer
+                extract_vin_features_production = train_vin_predictor.extract_vin_features_production
+                decode_year = train_vin_predictor.decode_year
+                print("✅ Successfully imported all modules (strategy 4)")
+            except ImportError as e4:
+                print(f"❌ All import strategies failed. Final error: {e4}")
+                print("⚠️ SKU prediction will not work without these modules")
+                # Set dummy functions to prevent crashes
+                def dummy_load_model(*args, **kwargs):
+                    print("❌ load_model not available - imports failed")
+                    return None
+                def dummy_predict_sku(*args, **kwargs):
+                    print("❌ predict_sku not available - imports failed")
+                    return "UNKNOWN", 0.0
+                def dummy_normalize_text(text):
+                    return text.lower() if text else ""
+                class DummyTokenizerClass:
+                    def __init__(self, *args, **kwargs): pass
+                    def transform(self, texts): return [[0] * 30 for _ in texts]
+                def dummy_extract_vin(*args, **kwargs):
+                    return [0] * 17
+                def dummy_decode_year(*args, **kwargs):
+                    return 2020
+
+                load_model = dummy_load_model
+                predict_sku = dummy_predict_sku
+                normalize_text = dummy_normalize_text
+                DummyTokenizer = DummyTokenizerClass
+                extract_vin_features_production = dummy_extract_vin
+                decode_year = dummy_decode_year
 
 import sys
 
@@ -104,17 +240,50 @@ PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 
 def get_resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller"""
-    if hasattr(sys, '_MEIPASS'):
-        # PyInstaller bundle - resources are in _MEIPASS
-        return os.path.join(sys._MEIPASS, relative_path)
-    elif getattr(sys, 'frozen', False):
-        # Running as executable - resources are relative to executable location
-        return os.path.join(os.path.dirname(sys.executable), relative_path)
+    if getattr(sys, 'frozen', False):
+        # Running as executable
+        exe_dir = os.path.dirname(sys.executable)
+        resource_path = os.path.join(exe_dir, relative_path)
+
+        print(f"🔍 Looking for resource: {relative_path}")
+        print(f"📁 Executable directory: {exe_dir}")
+        print(f"📄 Full resource path: {resource_path}")
+
+        # Check if the file exists next to the executable
+        if os.path.exists(resource_path):
+            print(f"✅ Found resource at executable location: {resource_path}")
+            return resource_path
+        else:
+            print(f"⚠️ Resource not found at executable location: {resource_path}")
+
+            # For database files, always use the path next to executable (even if it doesn't exist)
+            # This allows the application to create/access the actual database
+            if relative_path.endswith('.db'):
+                print(f"📝 Using executable location for database: {resource_path}")
+                return resource_path
+
+            # For Excel files, try bundled first, then fall back to executable location
+            elif relative_path.endswith('.xlsx'):
+                if hasattr(sys, '_MEIPASS'):
+                    bundled_path = os.path.join(sys._MEIPASS, relative_path)
+                    if os.path.exists(bundled_path):
+                        print(f"✅ Using bundled Excel file: {bundled_path}")
+                        return bundled_path
+                print(f"📝 Using executable location for Excel file: {resource_path}")
+                return resource_path
+
+            # For other resources (models, etc.), use bundled resources
+            else:
+                if hasattr(sys, '_MEIPASS'):
+                    fallback_path = os.path.join(sys._MEIPASS, relative_path)
+                    print(f"🔄 Using bundled resource: {fallback_path}")
+                    return fallback_path
+                return resource_path
     else:
         # Running as script - point to client directory structure
         script_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.dirname(script_dir)  # Go up from src/ to project root
-        client_dir = os.path.join(project_root, "Fixacar_SKU_Predictor_CLIENT")
+        client_dir = os.path.join(project_root, "Fixacar_NUCLEAR_DEPLOYMENT", "Fixacar_SKU_Predictor_CLIENT")
         return os.path.join(client_dir, relative_path)
 
 
@@ -201,7 +370,7 @@ class FixacarApp:
 
             # Initialize year range database optimizer
             try:
-                db_path = os.path.join(get_base_path(), "Source_Files", "processed_consolidado.db")
+                db_path = get_resource_path(os.path.join("Source_Files", "processed_consolidado.db"))
                 print(f"🔍 Year range optimizer DB path: {db_path}")
                 print(f"🔍 DB exists: {os.path.exists(db_path)}")
                 self.year_range_optimizer = YearRangeDatabaseOptimizer(db_path)
@@ -220,7 +389,7 @@ class FixacarApp:
             self.optimized_db = None
             # Still try to initialize year range optimizer separately
             try:
-                db_path = os.path.join(get_base_path(), "Source_Files", "processed_consolidado.db")
+                db_path = get_resource_path(os.path.join("Source_Files", "processed_consolidado.db"))
                 print(f"🔍 Year range optimizer DB path (fallback): {db_path}")
                 print(f"🔍 DB exists (fallback): {os.path.exists(db_path)}")
                 self.year_range_optimizer = YearRangeDatabaseOptimizer(db_path)
@@ -3351,22 +3520,60 @@ class FixacarApp:
 
 
 if __name__ == '__main__':
+    print("🚀 Starting Fixacar SKU Predictor...")
+    print("=" * 50)
+
     current_dir = os.getcwd()
     print(f"Current working directory: {current_dir}")
-    print(
-        f"Expected Text_Processing_Rules.xlsx at: {os.path.join(current_dir, DEFAULT_TEXT_PROCESSING_PATH)}")
-    print(
-        f"Expected/Creating Maestro.xlsx at: {os.path.join(current_dir, DEFAULT_MAESTRO_PATH)}")
-    print(
-        f"Expected fixacar_history.db at: {os.path.join(current_dir, DEFAULT_DB_PATH)}")
-    # Removed the print statement that caused the error
+    print(f"Expected Text_Processing_Rules.xlsx at: {os.path.join(current_dir, DEFAULT_TEXT_PROCESSING_PATH)}")
+    print(f"Expected/Creating Maestro.xlsx at: {os.path.join(current_dir, DEFAULT_MAESTRO_PATH)}")
+    print(f"Expected fixacar_history.db at: {os.path.join(current_dir, DEFAULT_DB_PATH)}")
 
-    root = tk.Tk()
-    root.title("Fixacar SKU Finder v2.0 (with VIN Predictor)")
-    root.geometry("1200x800")  # Set a reasonable default size
+    # Check if critical files exist
+    critical_files = [
+        (DEFAULT_TEXT_PROCESSING_PATH, "Text Processing Rules"),
+        (DEFAULT_MAESTRO_PATH, "Maestro Data"),
+        (DEFAULT_DB_PATH, "Database")
+    ]
 
-    # Maximize the window on startup to ensure all buttons are visible
-    root.state('zoomed')  # Windows equivalent of maximized
+    print("\n📁 Checking critical files...")
+    for file_path, description in critical_files:
+        full_path = os.path.join(current_dir, file_path)
+        if os.path.exists(full_path):
+            size_mb = os.path.getsize(full_path) / (1024 * 1024)
+            print(f"✅ {description}: {size_mb:.1f} MB")
+        else:
+            print(f"⚠️ {description}: NOT FOUND (will be created)")
 
-    app = FixacarApp(root)
-    root.mainloop()
+    print("\n🖥️ Initializing GUI...")
+    try:
+        root = tk.Tk()
+        print("✅ Tkinter root window created")
+
+        root.title("Fixacar SKU Finder v2.0 (with VIN Predictor)")
+        root.geometry("1200x800")  # Set a reasonable default size
+        print("✅ Window title and size set")
+
+        # Maximize the window on startup to ensure all buttons are visible
+        try:
+            root.state('zoomed')  # Windows equivalent of maximized
+            print("✅ Window maximized")
+        except Exception as e:
+            print(f"⚠️ Could not maximize window: {e}")
+
+        print("🎨 Creating application interface...")
+        app = FixacarApp(root)
+        print("✅ Application interface created successfully")
+
+        print("🚀 Starting main event loop...")
+        print("=" * 50)
+        print("GUI should now be visible!")
+
+        root.mainloop()
+
+    except Exception as e:
+        print(f"❌ Error initializing GUI: {e}")
+        import traceback
+        traceback.print_exc()
+        input("Press Enter to exit...")
+        sys.exit(1)

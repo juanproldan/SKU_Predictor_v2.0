@@ -17,11 +17,13 @@ import re
 def get_base_path():
     """Get the base path for the application, works for both script and executable."""
     if getattr(sys, 'frozen', False):
-        # Running as executable
+        # Running as executable - executable is in client folder root
         return os.path.dirname(sys.executable)
     else:
-        # Running as script
-        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # Running as script - script is in src/, need to find client folder
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(script_dir)  # Go up from src/ to project root
+        return os.path.join(project_root, "Fixacar_SKU_Predictor_CLIENT")
 
 BASE_PATH = get_base_path()
 CONSOLIDADO_DB_PATH = os.path.join(BASE_PATH, "Fixacar_SKU_Predictor_CLIENT", "Source_Files", "processed_consolidado.db")
